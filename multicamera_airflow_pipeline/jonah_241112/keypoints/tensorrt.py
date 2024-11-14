@@ -4,6 +4,7 @@ import torch
 from pathlib import Path
 from mmpose.registry import DATASETS
 from mmpose.datasets.datasets.base import BaseCocoStyleDataset
+from mmengine.config.config import Config
 import subprocess
 import tempfile
 import os
@@ -37,6 +38,7 @@ class RTMModelConverter:
         path_to_demo_image_pose="/n/groups/datta/tim_sainburg/projects/24-01-05-multicamera_keypoints_mm2d/example_data/test_mouse_cropped.png",
         path_to_mmdetection_config="/n/groups/datta/tim_sainburg/projects/mmdeploy/configs/mmdet/detection/detection_tensorrt_static-320x320.py",
         path_to_mmpose_config="/n/groups/datta/tim_sainburg/projects/mmdeploy/configs/mmpose/pose-detection_simcc_tensorrt_dynamic-256x256.py",
+        tensorrt_dir="/n/groups/datta/Jonah/Local_code_groups/tensorrt_install/TensorRT-8.6.1.6",
         is_local=False,
     ):
         self.path_to_rmpose_config = Path(path_to_rmpose_config)
@@ -53,7 +55,9 @@ class RTMModelConverter:
         self.path_to_mmdetection_config = path_to_mmdetection_config
         self.path_to_mmpose_config = path_to_mmpose_config
         self.skeleton_py_file = Path(skeleton_py_file)
+        self.tensorrt_dir = tensorrt_dir
         self.is_local = is_local
+
 
         # get the device
         cuda_available = torch.cuda.is_available()
@@ -74,12 +78,14 @@ class RTMModelConverter:
         self.rtmpose_output.mkdir(parents=True, exist_ok=True)
 
     def generate_sitecustomize_script(self):
+        rtm_config = Config.fromfile(self.path_to_rmpose_config)
+        dataset_type_name = rtm_config["dataset_type"]
         sitecustomize_script = "from mmpose.registry import DATASETS\n"
         sitecustomize_script += "from mmpose.datasets.datasets.base import BaseCocoStyleDataset\n"
         sitecustomize_script += f"skeleton_py_file = '{self.skeleton_py_file.as_posix()}'\n"
-        sitecustomize_script += f"@DATASETS.register_module()\n"
-        sitecustomize_script += f"class CoCo25pt(BaseCocoStyleDataset):\n"
-        sitecustomize_script += f"\tMETAINFO: dict = dict(from_file=skeleton_py_file)\n"
+        sitecustomize_script += "@DATASETS.register_module()\n"
+        sitecustomize_script += f"class {dataset_type_name}(BaseCocoStyleDataset):\n"
+        sitecustomize_script += "\tMETAINFO: dict = dict(from_file=skeleton_py_file)\n"
         return sitecustomize_script
 
     def check_if_detector_tensorrt_exists(self):
@@ -110,14 +116,19 @@ class RTMModelConverter:
             file.write(sitecustomize_script)
 
         # warning: this will switch out current cuda module
+        model_conversion_script = ""
         if self.is_local:
             # local (at least on peromoseq) needs to source conda first
             model_conversion_script = "source $(conda info --base)/etc/profile.d/conda.sh;\n"
             model_conversion_script += f"conda activate {self.conda_env};\n"
         else:
-            model_conversion_script = f"module load gcc/9.2.0\n"
-            model_conversion_script = f"module load cuda/11.7\n"
-            model_conversion_script += f"source activate {self.conda_env};\n"
+            model_conversion_script += "module load gcc/9.2.0\n"
+            model_conversion_script += "module load cuda/11.7\n"
+            model_conversion_script += f"TENSORRT_DIR={self.tensorrt_dir}\n"
+            model_conversion_script += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
+            # model_conversion_script += f"source activate {self.conda_env};\n"
+            model_conversion_script += 'eval "$(conda shell.bash hook)";\n'
+            model_conversion_script += f"conda activate {self.conda_env};\n"
         # # Set PYTHONPATH to include the directory where sitecustomize.py is located
         model_conversion_script += f"export PYTHONPATH={temp_dir}:$PYTHONPATH;\n"
         model_conversion_script += (
@@ -128,10 +139,10 @@ class RTMModelConverter:
         model_conversion_script += f" {self.path_to_rmpose_checkpoint}"
         model_conversion_script += f" {self.path_to_demo_image_pose}"
         model_conversion_script += f" --work-dir { self.rtmpose_output}"
-        model_conversion_script += f" --device cuda:0"
+        model_conversion_script += " --device cuda:0"
         # model_conversion_script += f" --log-level DEBUG"
         # model_conversion_script += f" --show"
-        model_conversion_script += f" --dump-info"  # dump sdk info
+        model_conversion_script += " --dump-info"  # dump sdk info
         print(model_conversion_script)
         # Run the model conversion script
         process = subprocess.Popen(
@@ -182,9 +193,14 @@ class RTMModelConverter:
             model_conversion_script += "source $(conda info --base)/etc/profile.d/conda.sh;\n"
             model_conversion_script += f"conda activate {self.conda_env};\n"
         else:
-            model_conversion_script += f"module load gcc/9.2.0\n"
-            model_conversion_script += f"module load cuda/11.7\n"
-            model_conversion_script += f"source activate {self.conda_env};\n"
+            model_conversion_script += "module load gcc/9.2.0\n"
+            model_conversion_script += "module load cuda/11.7\n"
+            model_conversion_script += f"TENSORRT_DIR={self.tensorrt_dir}\n"
+            model_conversion_script += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
+            model_conversion_script += 'eval "$(conda shell.bash hook)";\n'
+            model_conversion_script += f"conda activate {self.conda_env};\n"
+            # model_conversion_script += f"source activate {self.conda_env};\n"
+
         # # Set PYTHONPATH to include the directory where sitecustomize.py is located
         model_conversion_script += f"export PYTHONPATH={temp_dir}:$PYTHONPATH;\n"
         model_conversion_script += (
@@ -195,10 +211,10 @@ class RTMModelConverter:
         model_conversion_script += f" {self.path_to_rtmdetection_checkpoint}"
         model_conversion_script += f" {self.path_to_demo_image_detection}"
         model_conversion_script += f" --work-dir { self.rtmdetection_output}"
-        model_conversion_script += f" --device cuda:0"
+        model_conversion_script += " --device cuda:0"
         # model_conversion_script += f" --log-level DEBUG"
         # model_conversion_script += f" --show"
-        model_conversion_script += f" --dump-info"  # dump sdk info
+        model_conversion_script += " --dump-info"  # dump sdk info
 
         # Run the model conversion script
         print("Running model conversion script:")
