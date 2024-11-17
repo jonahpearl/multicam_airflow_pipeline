@@ -68,7 +68,7 @@ class Calibrator:
                 ]
                 for camera in self.camera_names
             }
-        except:
+        except (IndexError, ValueError):
             self.video_paths = {
                 camera: [
                     list(Path(f"{self.calibration_video_directory}").glob(f"*{camera}.0.mp4"))[0]
