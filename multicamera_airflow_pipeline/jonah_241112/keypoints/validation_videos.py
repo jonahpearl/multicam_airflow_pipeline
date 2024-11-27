@@ -16,21 +16,33 @@ from tqdm.auto import tqdm
 # load skeleton
 from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
     dataset_info,
+    kpt_dict,  # keypoint_name: id
+    conf_thresholds_by_camera,
 )
+from multicamera_airflow_pipeline.utils.naming_utils import split_multicam_filename
 
 logging.info("Python interpreter binary location:", sys.executable)
 logger = logging.getLogger(__name__)
+
+"""
+TODO:
+- change keypoints to x vs o for lo/hi confidence
+
+"""
 
 class KeypointVideoCreator:
     def __init__(
         self,
         predictions_2d_directory,
         predictions_triang_directory,
+        predictions_gimbal_directory,
         camera_calibration_directory,
         raw_video_directory,
         output_directory_keypoint_vids,
         max_frames=2400,
+        bbox_crop_size=(450, 450),
         recompute_completed=False,
+        patterns_to_exclude_from_vids=["azure", "TRIM"],
     ):
         """
         Class to take the output of the keypoint pipeline and create videos with keypoints overlaid.
@@ -42,6 +54,9 @@ class KeypointVideoCreator:
 
         predictions_triang_directory : str
             Path to the directory containing the triangulated 3D keypoint predictions.
+
+        predictions_gimbal_directory: str
+            Path to the directory containing the gimbal inference predictions.
 
         camera_calibration_directory : str
             Path to the directory containing the camera calibration files.
@@ -60,11 +75,14 @@ class KeypointVideoCreator:
         """
         self.predictions_2d_directory = Path(predictions_2d_directory)
         self.predictions_triang_directory = Path(predictions_triang_directory)
+        self.predictions_gimbal_directory = Path(predictions_gimbal_directory)
         self.camera_calibration_directory = Path(camera_calibration_directory)
         self.raw_video_directory = Path(raw_video_directory)
         self.output_directory_keypoint_vids = Path(output_directory_keypoint_vids)
         self.max_frames = max_frames
         self.recompute_completed = recompute_completed
+        self.patterns_to_exclude_from_vids = patterns_to_exclude_from_vids
+        self.bbox_crop_size = bbox_crop_size
 
         # Initialize keypoint and skeleton information from dataset_info
         self.keypoint_info = dataset_info["keypoint_info"]
@@ -102,6 +120,7 @@ class KeypointVideoCreator:
             self.video_files[camera] = list(
                 self.raw_video_directory.glob(f"*{camera}*.mp4")
             )
+            self.video_files[camera] = [v for v in self.video_files[camera] if not any([p in v.name for p in self.patterns_to_exclude_from_vids])]
             if len(self.video_files[camera]) == 0:
                 raise ValueError(f"No video files found for camera {camera}")
             elif len(self.video_files[camera]) > 1:
@@ -112,8 +131,11 @@ class KeypointVideoCreator:
     def load_2D_prediction_filenames(self):
         # grab all the predictions 2D h5 files
         predictions_2d_files = list(self.predictions_2d_directory.glob("*.h5"))
-        cam = [i.stem.split(".")[1] for i in predictions_2d_files]
-        frame = [int(i.stem.split(".")[2]) for i in predictions_2d_files]
+        filename_splits = [split_multicam_filename(i) for i in predictions_2d_files]
+        cam = [i["camera"] for i in filename_splits]
+        frame = [i["start_frame"] for i in filename_splits]
+        # cam = [i.stem.split(".")[1] for i in predictions_2d_files]
+        # frame = [int(i.stem.split(".")[2]) for i in predictions_2d_files]
         self.recording_predictions = pd.DataFrame(
             {"camera": cam, "frame": frame, "file": predictions_2d_files}
         )
@@ -132,6 +154,22 @@ class KeypointVideoCreator:
         assert len(predictions_triang_files) == len(confidences_triang_files) == 1
         self.triang_predictions_file = predictions_triang_files[0]
         self.triang_confidences_file = confidences_triang_files[0]
+
+    def load_gimbal_inference_filenames(self):
+        predictions_gimbal_files = list(
+            self.predictions_gimbal_directory.glob("gimbal.float*.mmap")
+        )
+        assert len(predictions_gimbal_files) == 1
+        self.gimbal_predictions_file = predictions_gimbal_files[0]
+        keypoints_used_in_gimbal_file = list(
+            self.predictions_gimbal_directory.glob("keypoints_order_gimbal.npy")
+        )
+        assert len(keypoints_used_in_gimbal_file) == 1
+        keypoints_in_gimbal = list(set(np.load(keypoints_used_in_gimbal_file[0])))
+        self.keypoint_idxs_missing_in_gimbal = []
+        for keypoint in kpt_dict:
+            if keypoint not in keypoints_in_gimbal:
+                self.keypoint_idxs_missing_in_gimbal.append(kpt_dict[keypoint])
 
     def load_2D_predictions(self):
         # Load up to max_frames of 2D predictions
@@ -193,8 +231,43 @@ class KeypointVideoCreator:
                 "keypoint_conf": these_confs,
             }
 
+    def load_gimbal_reproj_predictions(self):
+        # Load max_frames of 2D reprojections from gimbal output
+        self.predictions_gimbal = {}
+        keypoint_coords = load_memmap_from_filename(self.gimbal_predictions_file)  # shape: (n_frames, n_keypoints, 3)
+        for iCamera, camera in enumerate(self.cameras):
+            these_coords_3D = keypoint_coords[:self.max_frames, :, :]
+
+            # Reproject the coords into 2D
+            extrinsics = self.all_extrinsics[iCamera]
+            camera_matrix, dist_coefs = self.all_intrinsics[iCamera]
+            these_coords_2D = mcc.project_points(
+                these_coords_3D,
+                extrinsics=extrinsics,
+                camera_matrix=camera_matrix,
+                dist_coefs=dist_coefs,
+            )
+
+            # Add nans to any keypoints not in gimbal
+            # by expanding these_coords_2D on the keypoint axis with nans.
+            for idx in self.keypoint_idxs_missing_in_gimbal:
+                these_coords_2D = np.insert(these_coords_2D, idx, np.nan, axis=1)
+            
+            # Store data
+            self.predictions_gimbal[camera] = {
+                "keypoint_coords": these_coords_2D,
+            }
+
+    def get_gimbal_centroids(self):
+        detection_coords_by_camera = {}
+        for camera in self.cameras:
+            reproj_coords = self.predictions_gimbal[camera]["keypoint_coords"]
+            centroids = np.nanmean(reproj_coords, axis=1)
+            centroids = nan_to_preceding(centroids)
+            detection_coords_by_camera[camera] = centroids
+        self.detection_coords_by_camera = detection_coords_by_camera
+
     def create_2D_keypoint_conf_plots(self):
-        # import pdb; pdb.set_trace()
         all_kp_confs = np.stack(
             [self.predictions_2d[cam]["keypoint_conf"] for cam in self.cameras], axis=-1
         )
@@ -219,7 +292,7 @@ class KeypointVideoCreator:
             keypoint_coords = self.predictions_2d[camera]["keypoint_coords"]
             keypoint_conf = self.predictions_2d[camera]["keypoint_conf"]
             bbox_coords = self.predictions_2d[camera]["detection_coords"]
-
+            conf_thresholds = conf_thresholds_by_camera["side"] if "side" in camera else conf_thresholds_by_camera[camera]
             generate_keypoint_video(
                 output_directory=self.output_directory_keypoint_vids,
                 video_path=self.video_files[camera],
@@ -229,6 +302,7 @@ class KeypointVideoCreator:
                 vid_suffix="with_2D_keypoints",
                 detection_coords=bbox_coords,
                 skeleton_info=dataset_info["skeleton_info"],
+                conf_thresholds=conf_thresholds,
                 max_frames=self.max_frames,
             )
 
@@ -245,37 +319,59 @@ class KeypointVideoCreator:
                 keypoint_info=dataset_info["keypoint_info"],
                 vid_suffix="with_triang_keypoints",
                 skeleton_info=dataset_info["skeleton_info"],
+                conf_thresholds=0.5,
+                max_frames=self.max_frames,
+            )
+
+    def create_reproj_gimbal_keypoint_videos(self):
+        for camera in self.cameras:
+            keypoint_coords = self.predictions_gimbal[camera]["keypoint_coords"]
+
+            generate_keypoint_video(
+                output_directory=self.output_directory_keypoint_vids,
+                video_path=self.video_files[camera],
+                keypoint_coords=keypoint_coords,
+                keypoint_conf=None,
+                keypoint_info=dataset_info["keypoint_info"],
+                vid_suffix="with_gimbal_keypoints",
+                skeleton_info=dataset_info["skeleton_info"],
                 max_frames=self.max_frames,
             )
 
     def crop_and_stitch_2D_keypoint_videos(self):
-        bbox_coords_by_camera = {
-            camera: self.predictions_2d[camera]["detection_coords"]
-            for camera in self.cameras
-        }
         crop_and_stich_vids(
             output_directory=self.output_directory_keypoint_vids,
             single_vid_suffix="with_2D_keypoints",  # Suffix to identify the single videos to be stitched together
-            bbox_coords_by_camera=bbox_coords_by_camera,
-            bbox_crop_size=(400, 400),
+            bbox_crop_size=self.bbox_crop_size,
+            detection_coords_by_camera=self.detection_coords_by_camera,
             max_frames=self.max_frames,
         )
 
     def crop_and_stitch_reproj_triang_keypoint_videos(self):
         # Use the centroid of the triang'd kps as the center of the bbox
-        detection_coords_by_camera = {}
-        for camera in self.cameras:
-            reproj_coords = self.predictions_triang[camera]["keypoint_coords"]
-            centroids = np.nanmean(reproj_coords, axis=1)
-            centroids = nan_to_preceding(centroids)
-            detection_coords_by_camera[camera] = centroids
+        # detection_coords_by_camera = {}
+        # for camera in self.cameras:
+        #     reproj_coords = self.predictions_triang[camera]["keypoint_coords"]
+        #     centroids = np.nanmean(reproj_coords, axis=1)
+        #     centroids = nan_to_preceding(centroids)
+        #     detection_coords_by_camera[camera] = centroids
 
         crop_and_stich_vids(
             output_directory=self.output_directory_keypoint_vids,
             single_vid_suffix="with_triang_keypoints",  # Suffix to identify the single videos to be stitched together
-            detection_coords_by_camera=detection_coords_by_camera,
-            bbox_crop_size=(400, 400),
+            detection_coords_by_camera=self.detection_coords_by_camera,
+            bbox_crop_size=self.bbox_crop_size,
             max_frames=self.max_frames,
+        )
+
+    def crop_and_stitch_gimbal_keypoint_videos(self):
+        # Use the centroid of the coords as the center of the bbox
+        crop_and_stich_vids(
+            output_directory=self.output_directory_keypoint_vids,
+            single_vid_suffix="with_gimbal_keypoints",  # Suffix to identify the single videos to be stitched together
+            detection_coords_by_camera=self.detection_coords_by_camera,
+            bbox_crop_size=self.bbox_crop_size,
+            max_frames=self.max_frames
         )
 
     def run(self):
@@ -305,18 +401,41 @@ class KeypointVideoCreator:
         self.load_2D_prediction_filenames()
         self.load_2D_predictions()
 
-        # Create the 2D keypoint videos
-        self.create_2D_keypoint_conf_plots()
-        self.create_2D_keypoint_videos()
-        self.crop_and_stitch_2D_keypoint_videos()
-        
         # Load the triangulated 3D predictions
         self.load_triang_prediction_filenames()
         self.load_triang_reproj_predictions()
+        
+        # Load gimbal inference predictions
+        self.load_gimbal_inference_filenames()
+        self.load_gimbal_reproj_predictions()
+
+        # Get centroids from GIMBAL to use across all videos
+        self.get_gimbal_centroids()
+
+        # Create the 2D keypoint videos
+        logging.info("Making 2D keypoint videos")
+        self.create_2D_keypoint_conf_plots()
+        self.create_2D_keypoint_videos()
+        logging.info("Stitching 2D keypoint videos")
+        self.crop_and_stitch_2D_keypoint_videos()
+        
 
         # Create the triangulated keypoint videos
+        logging.info("Making 3D triang videos")
         self.create_reproj_triang_keypoint_videos()
+        logging.info("Stitching 3D triang videos")
         self.crop_and_stitch_reproj_triang_keypoint_videos()
+
+        # Create the gimbal keypoint videos
+        logging.info("Making gimbal videos")
+        self.create_reproj_gimbal_keypoint_videos()
+        self.crop_and_stitch_gimbal_keypoint_videos()
+
+        logging.info("Stitching rows together...")
+        crop_and_stitch_rows_of_vids(
+            output_directory=self.output_directory_keypoint_vids,
+            bbox_crop_size=self.bbox_crop_size,
+        )
 
         # Compress all the videos
         # (Runs at ~10 fps --> adds another 7200 frames / 10 fps = 720s = 12 minutes x 6 vids = ~1 hr)
@@ -396,7 +515,9 @@ def generate_keypoint_video(
     skeleton_info: dict,
     vid_suffix: str,
     detection_coords: np.ndarray = None,
+    conf_thresholds: dict = None,
     max_frames=None,
+    overwrite=False,
 ):
     """
     Generates a video with keypoint predictions overlaid on the original video frames.
@@ -438,6 +559,24 @@ def generate_keypoint_video(
     vid_suffix : str
         Suffix to add to the video file name. Ie "with_2D_keypoints" or "with_3D_keypoints"
 
+    detection_coords : np.ndarray
+        Array of shape (#frames, 4) containing the bounding box coordinates (x1, y1, x2, y2) for each frame. If provided,
+        the bounding box will be drawn on the video frames.
+
+    conf_thresholds : dict | int | None
+        Dictionary containing the confidence thresholds (for 2D prediction) for each keypoint type.
+        If a keypoint's confidence is below the threshold, it will be drawn as a small "x".
+        Possible keypoint types:
+            "tail", "spine", "hind_paw", "fore_paw", "ear", "forehead",  "nose_tip", 
+        If an integer is provided, it will be used as the threshold for all keypoints.
+        If None, all keypoints will be drawn with a circle.
+
+    max_frames : int
+        Maximum number of frames to process. If None, all frames will be processed.
+
+    overwrite : bool
+        If True, the output video will be overwritten if it already exists.
+
     Returns:
     --------
     None
@@ -466,6 +605,16 @@ def generate_keypoint_video(
     generate_keypoint_video(output_directory, video_path, keypoint_coords, keypoint_conf, keypoint_info, skeleton_info)
     """
 
+    print(f"Generating video {vid_suffix} from {os.path.basename(video_path)}")
+    filename_parts = split_multicam_filename(video_path)
+    camera = filename_parts["camera"]
+
+    # Check if the output video already exists
+    output_path = output_directory / (video_path.stem + "." + vid_suffix + ".mp4")
+    if output_path.exists() and not overwrite:
+        logging.info(f"Output video already exists: {output_path}")
+        return
+
     # Open the input video
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -478,7 +627,7 @@ def generate_keypoint_video(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # Create the VideoWriter object
-    output_path = output_directory / (video_path.stem + "_" + vid_suffix + ".mp4")
+    output_path = output_directory / (video_path.stem + "." + vid_suffix + ".mp4")
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(str(output_path), fourcc, fps, (frame_width, frame_height))
 
@@ -501,7 +650,7 @@ def generate_keypoint_video(
                 break
 
             # Create an overlay for drawing
-            overlay = frame.copy()
+            # overlay = frame.copy()
 
             # Draw keypoints
             for kp_idx, kp_info in keypoint_info.items():
@@ -509,23 +658,45 @@ def generate_keypoint_video(
                     frame_idx < len(keypoint_coords)
                     and kp_idx < keypoint_coords.shape[1]
                 ):
+
+                    # If using confidence thresholds per keypoint, find the threshold
+                    if conf_thresholds is not None and isinstance(conf_thresholds, dict):
+                        this_conf_thresh = [val for keypoint_type,val in conf_thresholds.items() if keypoint_type in kp_info["name"]]
+                    elif isinstance(conf_thresholds, int):
+                        this_conf_thresh = conf_thresholds
+                    else:
+                        this_conf_thresh = 0
+
+                    # Get the coords. If nans, skip.
                     x, y = keypoint_coords[frame_idx, kp_idx]
                     if np.isnan(x) or np.isnan(y):
                         continue
-                    conf = keypoint_conf[frame_idx, kp_idx]
+
+                    # If no confidence values provided, just set to 1.
+                    if keypoint_conf is not None:
+                        conf = keypoint_conf[frame_idx, kp_idx]
+                    else:
+                        conf = 1
+
+                    # Draw the keypoint  
                     color = tuple(kp_info["color"])
-                    alpha = conf  # Alpha value is based on the confidence (0-1)
-                    if conf > 0:  # Only draw if confidence is greater than 0
-                        overlay = cv2.circle(
-                            overlay,
+                    if conf > this_conf_thresh:  # Only draw if confidence is greater than 0
+                        frame = cv2.circle(
+                            frame,
                             (int(x), int(y)),
-                            radius=4,
+                            radius=5,
                             color=color,
                             thickness=-1,
                         )
-
-            # Apply the overlay with alpha blending for keypoints
-            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+                    else:
+                        frame = cv2.drawMarker(
+                            frame,
+                            (int(x), int(y)),
+                            color=color,
+                            markerType=cv2.MARKER_TILTED_CROSS,
+                            markerSize=12,
+                            thickness=2,
+                        )
 
             # Draw skeleton
             for link_info in skeleton_info.values():
@@ -555,45 +726,54 @@ def generate_keypoint_video(
                     ):
                         x1, y1 = keypoint_coords[frame_idx, kp1_id]
                         x2, y2 = keypoint_coords[frame_idx, kp2_id]
+                        color = tuple(link_info["color"])
                         if np.isnan(x1) or np.isnan(y1) or np.isnan(x2) or np.isnan(y2):
                             continue
-                        kp1_conf = keypoint_conf[frame_idx, kp1_id]
-                        kp2_conf = keypoint_conf[frame_idx, kp2_id]
-                        color = tuple(link_info["color"])
-                        alpha = min(
-                            kp1_conf, kp2_conf
-                        )  # Alpha value is the minimum confidence of the link
-                        if (
-                            kp1_conf > 0 and kp2_conf > 0 and not np.isnan(x1)
-                        ):  # Only draw if both confidence values are greater than 0
-                            overlay = cv2.line(
-                                overlay,
-                                (int(x1), int(y1)),
-                                (int(x2), int(y2)),
-                                color=color,
-                                thickness=2,
-                            )
-
-            # Apply the overlay with alpha blending for skeleton
-            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+                        frame = cv2.line(
+                            frame,
+                            (int(x1), int(y1)),
+                            (int(x2), int(y2)),
+                            color=color,
+                            thickness=2,
+                        )
 
             # Find centroid of bounding box
             # x1, y1, x2, y2 = detection_coords[frame_idx, 0, :]
             # centroid = (int((x1 + x2) / 2), int((y1 + y2) / 2))
-            # overlay = cv2.circle(
-            #     overlay, centroid, radius=4, color=(0, 255, 0), thickness=-1
+            # frame = cv2.circle(
+            #     frame, centroid, radius=4, color=(0, 255, 0), thickness=-1
             # )
 
             # Draw the detection bounding box on the frame
             # if frame_idx < len(detection_coords):
             #     x1, y1, x2, y2 = detection_coords[frame_idx,0,:]
-            #     overlay = cv2.rectangle(
-            #         overlay, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2
+            #     frame = cv2.rectangle(
+            #         frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2
             #     )
 
-            # # Apply the overlay
-            alpha = 0.5
-            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+            # Write the frame number in the top left corner
+            frame = cv2.putText(
+                frame,
+                str(frame_idx),
+                (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+            # Write the camera name below the frame number
+            frame = cv2.putText(
+                frame,
+                camera,
+                (10, 90),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
 
             # Write the frame with keypoints and skeletons to the output video
             out.write(frame)
@@ -610,12 +790,13 @@ def generate_keypoint_video(
 
 
 def crop_and_stich_vids(
-    output_directory: Path,
-    single_vid_suffix: str,
-    bbox_coords_by_camera: dict[np.ndarray] = None,
-    detection_coords_by_camera: dict[np.ndarray] = None,
+    output_directory,
+    single_vid_suffix,
+    bbox_coords_by_camera=None,
+    detection_coords_by_camera=None,
     bbox_crop_size=(400, 400),
     max_frames=None,
+    overwrite=False,
 ):
     """
     Take keypoint videos and crop the mouse out, and stitch together the cropped videos into one row.
@@ -628,18 +809,19 @@ def crop_and_stich_vids(
     single_vid_suffix : str
         Suffix to identify the single videos to be stitched together.
 
-    bbox_coords_by_camera : dict or None
+    bbox_coords_by_camera : dict[np.ndarray] or None
         Dictionary containing the bounding box coordinates for each camera. The keys are camera names and the values are
         numpy arrays of shape (#frames, 4) containing the bounding box coordinates (x1, y1, x2, y2) for each frame.
         If None, must provide detection coordinates instead, which wil be treated as centroids.
 
-    detection_coords_by_camera : dict or None
+    detection_coords_by_camera : dict[np.ndarray] or None
         Dictionary containing the detection coordinates for each camera. The keys are camera names and the values are
         numpy arrays of shape (#frames, 4) containing the detection (ie centroid) coordinates (x, y) for each frame.
         If None, must provide bbox coordinates instead, which will be used to infer a centroid + crop
         (the bboxes from mmpose aren't uniform size, so we infer centroid + crop to standard size).
 
     """
+    print(f"Cropping and stitching videos: {single_vid_suffix}")
 
     assert (
         bbox_coords_by_camera is not None or detection_coords_by_camera is not None
@@ -649,8 +831,15 @@ def crop_and_stich_vids(
     ), "Must provide either bbox or detection coordinates, not both."
 
     out_vids = list(output_directory.glob(f"*{single_vid_suffix}.mp4"))
-    timestamp, cam, vid_suffix = out_vids[0].stem.split(".")
-    stitched_vid_name = ".".join([timestamp, "stitched", vid_suffix, ".mp4"])
+    # timestamp, cam, vid_suffix = out_vids[0].stem.split(".")
+    filename_info = split_multicam_filename(out_vids[0], mode="validation_videos")
+    stitched_vid_name = ".".join([filename_info["rec_name"], "stitched", filename_info["suffix"], "mp4"])
+
+    # Check if the output video already exists
+    out_vid_path = output_directory / Path(stitched_vid_name)
+    if out_vid_path.exists() and not overwrite:
+        logging.info(f"Output video already exists: {out_vid_path}")
+        return
 
     # Get the total number of frames to use
     tmp_cap = cv2.VideoCapture(str(out_vids[0]))
@@ -669,7 +858,8 @@ def crop_and_stich_vids(
     bbox_centroids_by_camera = {}
     if bbox_coords_by_camera is not None:
         for vid in out_vids:
-            recording_id, camera, frame, ext = os.path.basename(vid).split(".")
+            # recording_id, camera, frame, ext = os.path.basename(vid).split(".")
+            camera = split_multicam_filename(vid, mode="validation_videos")["camera"]
             detn_coords = bbox_coords_by_camera[camera]
             bbox_centroids_by_camera[camera] = np.array(
                 [[(x1 + x2) / 2, (y1 + y2) / 2] for x1, y1, x2, y2 in detn_coords]
@@ -680,7 +870,8 @@ def crop_and_stich_vids(
             )
     elif detection_coords_by_camera is not None:
         for vid in out_vids:
-            recording_id, camera, frame, ext = os.path.basename(vid).split(".")
+            # recording_id, camera, frame, ext = os.path.basename(vid).split(".")
+            camera = split_multicam_filename(vid, mode="validation_videos")["camera"]
             bbox_centroids_by_camera[camera] = median_filter(
                 detection_coords_by_camera[camera], size=(12, 1)
             )
@@ -697,7 +888,8 @@ def crop_and_stich_vids(
         cap_by_camera = {}
         for vid in out_vids:
             cap = cv2.VideoCapture(str(vid))
-            cap_by_camera[os.path.basename(vid).split(".")[1]] = cap
+            camera = split_multicam_filename(vid, mode="validation_videos")["camera"]
+            cap_by_camera[camera] = cap
 
         frame_idx = 0
         while True:
@@ -713,6 +905,31 @@ def crop_and_stich_vids(
                 x1, y1 = x - bbox_crop_size[0] // 2, y - bbox_crop_size[1] // 2
                 x2, y2 = x + bbox_crop_size[0] // 2, y + bbox_crop_size[1] // 2
                 frame = frame[int(y1) : int(y2), int(x1) : int(x2)]
+
+                # Write the camera name in the top left corner
+                frame = cv2.putText(
+                    frame,
+                    camera,
+                    (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+
+                if camera == "bottom":
+                    # Also add the frame number below the camera name
+                    frame = cv2.putText(
+                        frame,
+                        str(frame_idx),
+                        (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
                 frames.append(frame)
 
             if not ret:
@@ -737,6 +954,74 @@ def crop_and_stich_vids(
             if max_frames and frame_idx >= max_frames:
                 break
 
+
+def crop_and_stitch_rows_of_vids(output_directory, bbox_crop_size=(400, 400), overwrite=False):
+    stitched_row_vids = list(output_directory.glob("*stitched.*.mp4"))
+    filename_info = split_multicam_filename(stitched_row_vids[0], mode="validation_videos")
+    out_vid_name = ".".join([filename_info["rec_name"], "stitched_rows", "mp4"])
+    out_vid = output_directory / Path(out_vid_name)
+
+    # Check if already done
+    if out_vid.exists() and not overwrite:
+        logging.info(f"Output video already exists: {out_vid}")
+        return
+
+    # Prepare video for writing
+    n_cams = len(list(output_directory.glob("*with_2D_keypoints*.mp4"))) - 1  # Subtract 1 for the stitched video
+    output_frame_size = (bbox_crop_size[0] * n_cams, bbox_crop_size[1] * len(stitched_row_vids))
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(str(out_vid), fourcc, 30, output_frame_size)
+
+    # Open the input videos in order of 2D keypoints, triangulation, gimbal
+    preds_2d_vid = [v for v in stitched_row_vids if "with_2D_keypoints" in v.stem]
+    preds_triang_vid = [v for v in stitched_row_vids if "with_triang_keypoints" in v.stem]
+    preds_gimbal_vid = [v for v in stitched_row_vids if "with_gimbal_keypoints" in v.stem]
+    vid_caps = []
+    for vid in preds_2d_vid + preds_triang_vid + preds_gimbal_vid:
+        cap = cv2.VideoCapture(str(vid))
+        vid_caps.append(cap)
+    
+    total_frames = int(vid_caps[0].get(cv2.CAP_PROP_FRAME_COUNT))
+    with tqdm(total=total_frames, desc="Processing frames") as pbar:
+        frame_idx = 0
+        while True:
+            rows = []
+            for cap in vid_caps:
+                ret, row = cap.read()
+                if not ret:
+                    break
+                rows.append(row)
+            if not ret:
+                break
+
+            # Stitch the frames together
+            stitched_frame = np.zeros(
+                (bbox_crop_size[1] * len(stitched_row_vids), bbox_crop_size[0] * n_cams, 3),
+                dtype=np.uint8,
+            )
+            
+            for i, row in enumerate(rows):
+                # import pdb; pdb.set_trace()
+                # Add each row to the stitched frame
+                stitched_frame[
+                    i * bbox_crop_size[1] : (i + 1) * bbox_crop_size[1], :, :
+                ] = row
+
+            # Write the stitched frame to the output video
+            out.write(stitched_frame)
+
+            # Loop control
+            frame_idx += 1
+            pbar.update(1)
+    
+    # Release video objects
+    for cap in vid_caps:
+        cap.release()
+    
+    # Release the output video
+    out.release()
+
+    return
 
 def load_memmap_from_filename(filename):
     # Extract the metadata from the filename

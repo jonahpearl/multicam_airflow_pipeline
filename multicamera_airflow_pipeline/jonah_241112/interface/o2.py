@@ -1,29 +1,16 @@
-import sys
-import logging
-
-logger = logging.getLogger(__name__)
-logger.info(f"Python interpreter binary location: {sys.executable}")
-
-import sys
-import pandas as pd
-from pathlib import Path
-import numpy as np
-import matplotlib.pyplot as plt
-import sys
-import glob
-import numpy as np
-import joblib, os
-import matplotlib.pyplot as plt
-from tqdm.auto import tqdm
-import re
-import subprocess
-from pathlib import Path
 from datetime import datetime
+import logging
+from pathlib import Path
+import subprocess
+import sys
 import tempfile
-import shutil
+import time
+
 import paramiko
 import yaml
 
+logger = logging.getLogger(__name__)
+logger.info(f"Python interpreter binary location: {sys.executable}")
 
 class O2Runner:
     """
@@ -115,20 +102,20 @@ class O2Runner:
             self.submit()
 
     def write_slurm_script(self):
-        slurm_script = f"#!/usr/bin/env bash\n"
+        slurm_script = "#!/usr/bin/env bash\n"
         slurm_script += f"#SBATCH --partition={self.o2_queue}\n"
         slurm_script += f"#SBATCH --job-name={self.job_name}\n"
         slurm_script += f"#SBATCH --cpus-per-task={self.o2_n_cpus}\n"
         slurm_script += f"#SBATCH --mem={self.o2_memory}\n"
         slurm_script += f"#SBATCH --time={self.o2_time_limit}\n"
-        slurm_script += f"#SBATCH --output={self.output_log}\n\n"
+        slurm_script += f"#SBATCH --output={self.output_log}_jobid_%j\n\n"
         if self.o2_exclude is not None:
             slurm_script += f"#SBATCH --exclude={self.o2_exclude}\n"
         if self.o2_qos is not None:
             slurm_script += f"#SBATCH --qos={self.o2_qos}\n"
         if self.o2_gres is not None:
             slurm_script += f"#SBATCH --gres={self.o2_gres}\n"
-        slurm_script += f"# Load the required modules\n"
+        slurm_script += "# Load the required modules\n"
         # slurm_script += f"module load gcc/9.2.0\n\n"
         for modules_to_load in self.modules_to_load:
             slurm_script += f"module load {modules_to_load}\n"
@@ -187,7 +174,7 @@ class O2Runner:
             # Check if there was any error
             error_message = stderr.read().decode().strip()
             if error_message:
-                raise Exception(f"Error creating remote directory: {error_message.as_posix()}")
+                raise Exception(f"Error creating remote directory: {error_message}")
 
             logger.info(f"Successfully created remote directory: {remote_path.as_posix()}")
         except Exception as e:
@@ -217,10 +204,24 @@ class O2Runner:
             logger.error(f"Exception during file transfer: {str(e)}")
             raise
 
-    def establish_ssh_connection(self):
+    def establish_ssh_connection(self, n_attempts=5, attempt_delay=60):
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.ssh.connect(self.o2_server, username=self.o2_username)
+        connected = False
+        ii = 0
+        while not connected and ii < n_attempts:
+            try:
+                self.ssh.connect(self.o2_server, username=self.o2_username)
+                connected = True
+            except Exception as e:
+                logger.error(f"Error connecting to O2: {str(e)}")
+                ii += 1
+                logger.info(f"Retrying connection in {attempt_delay} seconds")
+                time.sleep(attempt_delay)
+        if not connected:
+            raise ConnectionError("Could not establish SSH connection to O2")
+
+        
 
     def close_ssh_connection(self):
         self.ssh.close()
@@ -233,7 +234,6 @@ class O2Runner:
         if self.ssh is None:
             raise ConnectionError("SSH connection is not established")
 
-        # self.establish_ssh_connection()
         stdin, stdout, stderr = self.ssh.exec_command(submit_command)
         slurm_output = stdout.read().decode()
         # check if the job was submitted successfully
@@ -269,7 +269,6 @@ class O2Runner:
         logger.info(f"Checking job status: {self.slurm_job_id}")
         # check_command = f"sacct -j {self.slurm_job_id} --format=State --noheader"
         check_command = f"sacct -j {self.slurm_job_id} --format=JobID,State | grep -E '^[0-9]+ ' | awk '{{print $2}}'"
-        # self.establish_ssh_connection()
         stdin, stdout, stderr = self.ssh.exec_command(check_command)
         slurm_output = stdout.read().decode()[:-1]
         job_state = slurm_output

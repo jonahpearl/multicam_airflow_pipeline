@@ -5,18 +5,23 @@ import numpy as np
 try:
     from multicamera_airflow_pipeline.jonah_241112.skeletons.weinreb15pt import (
         dataset_info,
+        conf_thresholds_by_camera,
         parents_dict,
+        front_keypoints,
+        side_keypoints,
+        back_keypoints,
     )
 except:
 
     # Add the directory containing the file to the system path
     sys.path.append(
-        "/n/groups/datta/tim_sainburg/projects/multicamera_airflow_pipeline/multicamera_airflow_pipeline/jonah_241112/skeletons/weinreb15pt.py"
+        "/n/groups/datta/Jonah/Local_code_groups/6cam_repos/multicam_airflow_pipeline/multicamera_airflow_pipeline/jonah_241112/skeletons/weinreb15pt.py"
     )
     # Now import the dataset_info dictionary
-    from weinreb15pt import dataset_info, parents_dict
+    from weinreb15pt import dataset_info, conf_thresholds_by_camera, parents_dict
 keypoint_info = dataset_info["keypoint_info"]
 skeleton_info = dataset_info["skeleton_info"]
+conf_thresholds_by_camera = conf_thresholds_by_camera
 keypoints = [keypoint_info[i]["name"] for i in keypoint_info.keys()]
 keypoints = np.array(keypoints)
 keypoints_order = keypoints

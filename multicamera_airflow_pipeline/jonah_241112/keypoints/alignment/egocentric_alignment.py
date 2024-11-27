@@ -1,40 +1,27 @@
-import sys
 import logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-logger.info(f"Python interpreter binary location: {sys.executable}")
-
-# general imports
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import shutil
-import tempfile
-import os
-import sys
 from pathlib import Path
-from datetime import datetime
+import shutil
+import sys
+import tempfile
+
+import matplotlib.pyplot as plt
+import numpy as np
 from tqdm.auto import tqdm
-import json
-import re
 
 # function specific imports
-from sklearn.decomposition import PCA
-import scipy.stats
-import cv2
-from scipy.spatial.transform import Rotation as R
-from sklearn.linear_model import LinearRegression
-
 # load skeleton
 from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
-    dataset_info,
-    skeleton_info,
-    parents_dict,
-    keypoint_info,
-    keypoints,
-    keypoints_order,
     kpt_dict,
+    skeleton_info,
+    gimbal_skeleton,
+    front_keypoints,
+    back_keypoints,
+    side_keypoints,
 )
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.info(f"Python interpreter binary location: {sys.executable}")
 
 
 class EgocentricAligner:
@@ -84,11 +71,16 @@ class EgocentricAligner:
         # ensure that there are no nans in the input
         assert np.any(np.isnan(self.predictions_3D_mmap)) == False, "nans in poses"
 
-        keypoints = np.array(list(kpt_dict.keys()))
+        # Find bodyparts, importantly in order.
+        # Eg, if keypoints originally went ABCD, and gimbal exlcuded C,
+        # then self.use_bodyparts would end up as ABD.
+        keypoint_names = list(kpt_dict.keys())  # original order of keypoints
+        self.use_bodyparts = set([k2 for k1 in gimbal_skeleton for k2 in k1])  # excludes tailtip for weinreb skeleton
+        self.use_bodyparts = [bp for bp in keypoint_names if bp in self.use_bodyparts]  # re-order to match the data
         if self.plot_steps:
             plot_keypoints(
                 self.predictions_3D_mmap[0],
-                keypoints,
+                self.use_bodyparts,
                 save_location=self.egocentric_alignment_output_directory
                 / "poses_before_alignment.png",
             )
@@ -98,7 +90,7 @@ class EgocentricAligner:
         elif self.alignment_method == "nonrigid":
             align_poses = align_poses_nonrigid
 
-        logger.info(f"initializing output")
+        logger.info("initializing output")
 
         # Create a temporary directory
         with tempfile.TemporaryDirectory() as tmpdirname:
@@ -113,13 +105,14 @@ class EgocentricAligner:
                 coordinates = np.array(self.predictions_3D_mmap)[batch_start:batch_end]
                 aligned_poses = align_poses(
                     coordinates,
+                    self.use_bodyparts,
                 )
                 self.aligned_poses_mmap[batch_start:batch_end] = aligned_poses
 
             if self.plot_steps:
                 plot_keypoints(
                     self.aligned_poses_mmap[0],
-                    keypoints,
+                    self.use_bodyparts,
                     save_location=self.egocentric_alignment_output_directory
                     / "poses_after_alignment.png",
                 )
@@ -178,7 +171,7 @@ def generate_initial_positions(positions):
     return init_positions
 
 
-def align_poses_rigid(poses):
+def align_poses_rigid(poses, keypoint_names):
     """This function performs egocentric alignment of pose data of the shape
     (timepoints, keypoints, 3), so that a front keypoint, such as the top of the spine,
     and a back keypoint, such as the bottom of the spine, are aligned along the x axis
@@ -186,81 +179,9 @@ def align_poses_rigid(poses):
     the front and side keypoints
     """
 
-    kpt_dict = {
-        "nose_tip": 0,
-        "left_ear": 1,
-        "right_ear": 2,
-        "left_eye": 3,
-        "right_eye": 4,
-        "throat": 5,
-        "forehead": 6,
-        "left_shoulder": 7,
-        "right_shoulder": 8,
-        "left_elbow": 9,
-        "right_elbow": 10,
-        "left_wrist": 11,
-        "right_wrist": 12,
-        "left_hind_paw_front": 13,
-        "right_hind_paw_front": 14,
-        "left_hind_paw_back": 15,
-        "right_hind_paw_back": 16,
-        "left_knee": 17,
-        "right_knee": 18,
-        "tail_base": 19,
-        "spine_low": 20,
-        "spine_mid": 21,
-        "spine_high": 22,
-        "left_fore_paw": 23,
-        "right_fore_paw": 24,
-    }
-
-    front_keypoints = [
-        "nose_tip",
-        "left_ear",
-        "right_ear",
-        "left_eye",
-        "right_eye",
-        "throat",
-        "forehead",
-        "left_shoulder",
-        "right_shoulder",
-        "right_elbow",
-        "left_elbow",
-        "left_fore_paw",
-        "right_fore_paw",
-        "spine_high",
-    ]
-    back_keypoints = [
-        "spine_mid",
-        "spine_low",
-        "tail_base",
-        "left_knee",
-        "right_knee",
-        "left_hind_paw_front",
-        "right_hind_paw_front",
-        "left_hind_paw_back",
-        "right_hind_paw_back",
-    ]
-    side_keypoints = [
-        "left_knee",
-        "right_knee",
-        "left_shoulder",
-        "right_shoulder",
-        "throat",
-        "right_elbow",
-        "left_elbow",
-        "left_fore_paw",
-        "right_fore_paw",
-        "left_hind_paw_front",
-        "right_hind_paw_front",
-        "left_hind_paw_back",
-        "right_hind_paw_back",
-        "nose_tip",
-    ]
-
-    front_keypoint_indices = [kpt_dict[i] for i in front_keypoints]
-    back_keypoint_indices = [kpt_dict[i] for i in back_keypoints]
-    side_keypoint_indices = [kpt_dict[i] for i in side_keypoints]
+    front_keypoint_indices = [keypoint_names.index(kp) for kp in front_keypoints]
+    back_keypoint_indices = [keypoint_names.index(kp) for kp in back_keypoints]
+    side_keypoint_indices = [keypoint_names.index(kp) for kp in side_keypoints]
     # ensure indices are array and not list
     front_keypoint_indices = np.array(front_keypoint_indices)
     back_keypoint_indices = np.array(back_keypoint_indices)
@@ -353,12 +274,14 @@ def align_poses_rigid(poses):
     return rotated_poses
 
 
-def plot_keypoints(kpts, keypoints, extent=50, save_location=None):
+def plot_keypoints(kpts, keypoint_names, extent=50, save_location=None):
     fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(5, 5))
     for _, link_info in skeleton_info.items():
         point1, point2 = link_info["link"]
-        idx1 = np.where(keypoints == point1)[0][0]
-        idx2 = np.where(keypoints == point2)[0][0]
+        if (point1 not in keypoint_names) or (point2 not in keypoint_names):
+            continue
+        idx1 = keypoint_names.index(point1)
+        idx2 = keypoint_names.index(point2)
         color = tuple(int(c) for c in link_info["color"])
         x = kpts[:, 0]
         y = kpts[:, 1]
@@ -408,42 +331,13 @@ def plot_keypoints(kpts, keypoints, extent=50, save_location=None):
         plt.show()
 
 
-def align_poses_nonrigid(poses):
+def align_poses_nonrigid(poses, keypoint_names):
     """This function performs egocentric alignment of pose data of the shape
     (timepoints, keypoints, 3), so that a front keypoint, such as the top of the spine,
     and a back keypoint, such as the bottom of the spine, are aligned along the x axis
     Then, rotate the side keypoint to be aligned with the y axis, perpendicular to
     the front and side keypoints
     """
-
-    kpt_dict = {
-        "nose_tip": 0,
-        "left_ear": 1,
-        "right_ear": 2,
-        "left_eye": 3,
-        "right_eye": 4,
-        "throat": 5,
-        "forehead": 6,
-        "left_shoulder": 7,
-        "right_shoulder": 8,
-        "left_elbow": 9,
-        "right_elbow": 10,
-        "left_wrist": 11,
-        "right_wrist": 12,
-        "left_hind_paw_front": 13,
-        "right_hind_paw_front": 14,
-        "left_hind_paw_back": 15,
-        "right_hind_paw_back": 16,
-        "left_knee": 17,
-        "right_knee": 18,
-        "tail_base": 19,
-        "spine_low": 20,
-        "spine_mid": 21,
-        "spine_high": 22,
-        "left_fore_paw": 23,
-        "right_fore_paw": 24,
-    }
-
     front_keypoints = [
         "spine_high",
     ]
@@ -451,8 +345,8 @@ def align_poses_nonrigid(poses):
         "tail_base",
     ]
 
-    front_keypoint_indices = [kpt_dict[i] for i in front_keypoints]
-    back_keypoint_indices = [kpt_dict[i] for i in back_keypoints]
+    front_keypoint_indices = [keypoint_names.index(kp) for kp in front_keypoints]
+    back_keypoint_indices = [keypoint_names.index(kp) for kp in back_keypoints]
 
     # standardization functions
     def vector_to_angle(V):

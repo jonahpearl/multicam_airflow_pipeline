@@ -16,7 +16,6 @@ camera_calibration:
   recompute_completed: False
   camera_names: ["top", "side1", "side2", "side3", "side4", "bottom"]
   sampling_method: null   # use all frames from calibraiton vids
-  check_vid_dir_for_completed: True  # whether to check the dir with the videos for calibraiton params; if found, use those.
   # sampling_method: "first_n"  # useful for debugging
   # n_frames_to_sample: 2000
 
@@ -132,8 +131,8 @@ prediction_2d:
   n_keypoints : 15
   n_animals : 1
   detection_interval : 1
-  use_motpy : True
-  n_motpy_tracks : 3
+  use_motpy : False
+  # n_motpy_tracks : 3
   use_tensorrt : True
   recompute_completed : False
   ignore_log_files : True

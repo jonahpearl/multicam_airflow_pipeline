@@ -1,19 +1,13 @@
-import glob, cv2
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from vidio.read import OpenCVReader
-import multicam_calibration as mcc
-import pathlib
-from pathlib import Path
-import subprocess
-from pathlib import PosixPath
-import tempfile
-import shutil
-import pandas as pd
-from tqdm.auto import tqdm
-import sys
 import logging
+from pathlib import Path, PosixPath
+import shutil
+import subprocess
+import sys
+import tempfile
+
+import av
+import multicam_calibration as mcc
+import numpy as np
 
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
@@ -35,6 +29,7 @@ class Calibrator:
         fps=None,
         recompute_completed=False,
         cameras_to_use=None,
+        check_vid_dir_for_completed=True,
     ):
         self.calibration_video_directory = Path(calibration_video_directory)
         self.camera_names = camera_names
@@ -51,6 +46,7 @@ class Calibrator:
         # if there are simultaneous recordings with different subsets of cameras
         #  (e.g. to and bottom chronic rigs, specific which cameras we're currently using)
         self.cameras_to_use = cameras_to_use
+        self.check_vid_dir_for_completed = check_vid_dir_for_completed
 
     def check_if_completed(self):
         # check if calibration has already been completed
@@ -59,43 +55,92 @@ class Calibrator:
         else:
             return False
 
+    def check_if_local_calibraiton_completed(self):
+        # check if calibration has already been completed
+        logger.info("Checking for local calibration results...")
+        output = list(self.calibration_video_directory.glob("**/camera_params.h5"))
+        if len(output) > 0:
+            self.all_extrinsics, self.all_intrinsics, self.camera_names = mcc.load_calibration(
+                output[0].as_posix(),
+                load_format="gimbal",
+            )
+            return True
+        else:
+            logger.info("None found, computing calibration as normal.")
+            return False
+    
+    def copy_local_calibration_to_results_dir(self):
+        """Only used if we find a local copy of calibration results, then we just copy them to the results directory.
+        """
+        # copy local calibration to results directory
+        self.calibration_output_directory.mkdir(parents=True, exist_ok=True)
+        logger.info("Saving calibration")
+        self.calibration_output_directory.mkdir(parents=True, exist_ok=True)
+        # save for JARVIS
+        jarvis_save_path = self.calibration_output_directory / "jarvis" / "CalibrationParameters/"
+        jarvis_save_path.mkdir(parents=True, exist_ok=True)
+        mcc.save_calibration(
+            self.all_extrinsics,
+            self.all_intrinsics,
+            self.camera_names,
+            jarvis_save_path,
+            save_format="jarvis",
+        )
+        # save for GIMBAL
+        gimbal_save_path = self.calibration_output_directory / "gimbal" / "camera_params.h5"
+        (self.calibration_output_directory / "gimbal").mkdir(parents=True, exist_ok=True)
+        mcc.save_calibration(
+            self.all_extrinsics,
+            self.all_intrinsics,
+            self.camera_names,
+            gimbal_save_path.as_posix(),
+            save_format="gimbal",
+        )
+
+
     def find_videos(self):
         # list videos for each camera (if there are multiple)
         try:
             self.video_paths = {
                 camera: [
-                    list(Path(f"{self.calibration_video_directory}").glob(f"*{camera}.mp4"))[0]
+                    list(Path(self.calibration_video_directory).glob(f"*.{camera}.mp4"))[0]
                 ]
                 for camera in self.camera_names
             }
-        except:
+        except (IndexError):
             self.video_paths = {
                 camera: [
-                    list(Path(f"{self.calibration_video_directory}").glob(f"*{camera}.0.mp4"))[0]
+                    list(Path(self.calibration_video_directory).glob(f"*.{camera}.0.mp4"))[0]
                 ]
                 for camera in self.camera_names
             }
-        for camera in self.camera_names:
-            additional_videos = list(
-                Path(f"{self.calibration_video_directory}").glob(f"{camera}.*.mp4")
-            )
-            additional_videos = [
-                i for i in additional_videos if i.stem.split(".")[-1].startswith("0") == False
-            ]
-            srt = np.argsort([int(i.stem.split(".")[-1]) for i in additional_videos])
-            additional_videos = np.array(additional_videos)[srt]
-            self.video_paths[camera] = self.video_paths[camera] + list(additional_videos)
-            self.video_paths[camera] = [str(i) for i in self.video_paths[camera]]
+            for camera in self.camera_names:
+                additional_videos = list(
+                    Path(f"{self.calibration_video_directory}").glob(f"*.{camera}.*.mp4")
+                )
+                additional_videos = [
+                    i for i in additional_videos if i.stem.split(".")[-1].startswith("0") == False
+                ]
+                srt = np.argsort([int(i.stem.split(".")[-1]) for i in additional_videos])
+                additional_videos = np.array(additional_videos)[srt]
+                self.video_paths[camera] = self.video_paths[camera] + list(additional_videos)
+                self.video_paths[camera] = [str(i) for i in self.video_paths[camera]]
 
     def run(self):
 
-        if self.recompute_completed == False:
-            logger.info(f"Checking if calibration is already completed")
+        if not self.recompute_completed:
+            logger.info("Checking if calibration is already completed")
             if self.check_if_completed():
                 return
 
+            if self.check_vid_dir_for_completed and self.check_if_local_calibraiton_completed():
+                logger.info("Found local calibration results, copying to results directory")
+                self.copy_local_calibration_to_results_dir()
+                logger.info("Done.")
+                return
+
         if self.camera_names is None:
-            logger.info(f"Retrieving camera names")
+            logger.info("Retrieving camera names")
             # get camera names (video format should be {camera_name}.{serial}.{frame}.mp4)
             self.camera_names = [
                 i.stem.split(".")[-2] for i in list(self.calibration_video_directory.glob("*.mp4"))
@@ -104,34 +149,36 @@ class Calibrator:
         logger.info(f"Camera names: {self.camera_names}")
         assert len(self.camera_names) > 0, "No camera names found"
 
-        logger.info(f"Finding videos")
+        logger.info("Finding videos")
         self.find_videos()
+        self.num_vids_per_camera = {camera: len(self.video_paths[camera]) for camera in self.camera_names}
         # logger report number of videos for each camera
         for camera in self.camera_names:
-            logger.info(f"Found {len(self.video_paths[camera])} videos for {camera}")
+            logger.info(f"Found {self.num_vids_per_camera[camera]} videos for {camera}")
 
         # create a temporary file joining together all of the calibration videos for each camera
         use_temp = False
-        if self.video_output_directory is None:
-            use_temp = True
-            tmpdir = tempfile.mkdtemp()
-            self.video_output_directory = tmpdir
+        if np.any([n > 1 for n in self.num_vids_per_camera.values()]):
+            if self.video_output_directory is None:
+                use_temp = True
+                tmpdir = tempfile.mkdtemp()
+                self.video_output_directory = tmpdir
 
-        # store new videos in a temporary directory
-        logger.info(f"Concatenating videos")
-        output_paths = []
-        # create a temporary super video
-        for camera in self.camera_names:
-            output_path = Path(self.video_output_directory) / f"{camera}.mp4"
-            concatenate_videos_ffmpeg(
-                videos=self.video_paths[camera], save_path=output_path, fps=self.fps
-            )
-            output_paths.append(output_path)
-        self.video_paths = output_paths
+            # store new videos in a temporary directory
+            logger.info("Concatenating videos")
+            # create a temporary super video
+            for camera in self.camera_names:
+                output_path = Path(self.video_output_directory) / f"{camera}.mp4"
+                concatenate_videos_ffmpeg(
+                    videos=self.video_paths[camera], save_path=output_path, fps=self.fps
+                )
+                self.video_paths[camera] = output_path
+        else:
+            self.video_paths = {k: v[0] for k, v in self.video_paths.items()}
 
         # make sure all videos are the same length
-        logger.info(f"Checking video lengths")
-        video_lengths = np.array([get_video_len(video_path) for video_path in self.video_paths])
+        logger.info("Checking video lengths")
+        video_lengths = np.array([get_video_len(video_path) for video_path in self.video_paths.values()])
         assert np.all(
             video_lengths == video_lengths[0]
         ), f"Videos are not the same length: {video_lengths}"
@@ -157,14 +204,14 @@ class Calibrator:
             aligned_frame_ixs = np.stack([np.arange(n_frames)] * n_vids).T
 
         # detect calibration object in each video
-        logger.info(f"Detecting calibration object")
+        logger.info("Detecting calibration object")
         all_calib_uvs, all_img_sizes = mcc.run_calibration_detection(
-            [i.as_posix() for i in self.video_paths],
+            [vid for vid in self.video_paths.values()],
             mcc.detect_chessboard,
             n_workers=self.n_jobs,
             aligned_frame_ixs=aligned_frame_ixs,
             detection_options=dict(board_shape=self.board_shape, scale_factor=0.5),
-            overwrite=True,
+            overwrite=self.recompute_completed,
         )
 
         if self.verbose:
@@ -172,13 +219,13 @@ class Calibrator:
             mcc.summarize_detections(all_calib_uvs)
 
             # plot corner-match scores for each frame
-            fig = mcc.plot_chessboard_qc_data(self.video_paths)
+            fig = mcc.plot_chessboard_qc_data([vid for vid in self.video_paths.values()])
 
         # initial calibration
-        logger.info(f"Initial calibration")
+        logger.info("Initial calibration")
         calib_objpoints = mcc.generate_chessboard_objpoints(self.board_shape, self.square_size)
 
-        all_extrinsics, all_intrinsics, calib_poses = mcc.calibrate(
+        all_extrinsics, all_intrinsics, calib_poses, spanning_tree = mcc.calibrate(
             all_calib_uvs,
             all_img_sizes,
             calib_objpoints,
@@ -200,7 +247,7 @@ class Calibrator:
             )
 
         # bundle adjustment
-        logger.info(f"Bundle adjustment")
+        logger.info("Bundle adjustment")
         (
             adj_extrinsics,
             adj_intrinsics,
@@ -218,10 +265,10 @@ class Calibrator:
         )
 
         # save
-        logger.info(f"Saving calibration")
+        logger.info("Saving calibration")
         self.calibration_output_directory.mkdir(parents=True, exist_ok=True)
         # save for JARVIS
-        jarvis_save_path = self.calibration_output_directory / "jarvis" / f"CalibrationParameters/"
+        jarvis_save_path = self.calibration_output_directory / "jarvis" / "CalibrationParameters/"
         jarvis_save_path.mkdir(parents=True, exist_ok=True)
         mcc.save_calibration(
             adj_extrinsics,
@@ -231,11 +278,11 @@ class Calibrator:
             save_format="jarvis",
         )
         # save for GIMBAL
-        gimbal_save_path = self.calibration_output_directory / "gimbal" / f"camera_params.h5"
+        gimbal_save_path = self.calibration_output_directory / "gimbal" / "camera_params.h5"
         (self.calibration_output_directory / "gimbal").mkdir(parents=True, exist_ok=True)
         mcc.save_calibration(
-            all_extrinsics,
-            all_intrinsics,
+            adj_extrinsics,
+            adj_intrinsics,
             self.camera_names,
             gimbal_save_path.as_posix(),
             save_format="gimbal",
@@ -262,11 +309,13 @@ class Calibrator:
 
 
 def get_video_len(video_path):
+    c = av.open(str(video_path))
+    return c.streams.video[0].frames
     # Note, this function will not work unless videos are properly muxed
-    reader = OpenCVReader(str(video_path))
-    n_frames = len(reader)
-    reader.close()
-    return n_frames
+    # reader = OpenCVReader(str(video_path))
+    # n_frames = len(reader)
+    # reader.close()
+    # return n_frames
 
 
 def concatenate_videos_ffmpeg(videos, save_path, fps=None):

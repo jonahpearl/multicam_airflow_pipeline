@@ -1,35 +1,32 @@
 # import spikeinterface as si
+import logging
+import os
 from pathlib import Path
-import numpy as np
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
-import pandas as pd
-from tqdm.auto import tqdm
+import shutil
+import sys
+import tempfile
+
 import h5py
 from joblib import Parallel, delayed
+import matplotlib.pyplot as plt
 import multicam_calibration as mcc
+import numpy as np
+import pandas as pd
 from scipy.ndimage import uniform_filter
-from scipy.signal import medfilt
-import sys
-import logging
-import tempfile
-import shutil
-import os
+from tqdm.auto import tqdm
 
-logging.basicConfig(level=logging.DEBUG)
-print("Python interpreter binary location:", sys.executable)
-
-logger = logging.getLogger(__name__)
-
-# load skeleton
 from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
     dataset_info,
     parents_dict,
+    conf_thresholds_by_camera,
     keypoint_info,
-    keypoints,
-    keypoints_order,
-    kpt_dict,
 )
+from multicamera_airflow_pipeline.utils.naming_utils import split_multicam_filename
+
+
+print("Python interpreter binary location:", sys.executable)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class Triangulator:
@@ -52,6 +49,7 @@ class Triangulator:
         recompute_completed=False,
         suppress_assertion=False,
         sub_last_frame=True,
+        testing=False,
     ):
         """
         Triangulator class for processing 2D keypoint predictions and generating 3D positions.
@@ -72,6 +70,9 @@ class Triangulator:
         mean_filt_samples (int): Number of samples for mean filtering (~100ms at 120fps). Default is 11.
         mean_filt_distance_thresh_px (float): Distance threshold for mean filtering in pixels. Default is 150.
         ignore_completed (bool): Flag to ignore completed tasks. Default is False.
+        suppress_assertion (bool): Flag to suppress assertion. Default is False.
+        sub_last_frame (bool): Flag to subtract last frame. Default is True.
+        testing (bool): Flag for testing. Will reduce number of frames used to 5000. Default is False.
         """
         self.predictions_2d_directory = Path(predictions_2d_directory)
         self.output_directory_triangulation = Path(output_directory_triangulation)
@@ -90,6 +91,7 @@ class Triangulator:
         self.recompute_completed = recompute_completed
         self.suppress_assertion = suppress_assertion
         self.sub_last_frame = sub_last_frame
+        self.testing = testing
 
         # Initialize keypoint and skeleton information from dataset_info
         keypoint_info = dataset_info["keypoint_info"]
@@ -102,7 +104,6 @@ class Triangulator:
 
     def check_if_triangulation_exists(self):
         # checks a log saved in output_directory_triangulation to see if the triangulation has already been completed
-
         if (self.output_directory_triangulation / "triangulation_completed.log").exists():
             return True
         else:
@@ -115,7 +116,7 @@ class Triangulator:
     def run(self):
 
         # check if the triangulation has already been completed
-        if self.recompute_completed == False:
+        if not self.recompute_completed:
             if self.check_if_triangulation_exists():
                 logger.info("Triangulation already exists")
                 return
@@ -162,6 +163,8 @@ class Triangulator:
             # prepare the output files
             (
                 tmp_predictions_2d_file,
+                tmp_predictions_reproj_2d_file,
+                tmp_predictions_raw_2d_file,
                 tmp_confidences_2d_file,
                 tmp_predictions_3d_file,
                 tmp_confidences_3d_file,
@@ -185,6 +188,8 @@ class Triangulator:
 
             # move the final temp_coordinates_file to the output directory
             move_and_overwrite(tmp_predictions_2d_file, self.output_directory_triangulation)
+            move_and_overwrite(tmp_predictions_reproj_2d_file, self.output_directory_triangulation)
+            move_and_overwrite(tmp_predictions_raw_2d_file, self.output_directory_triangulation)
             move_and_overwrite(tmp_confidences_2d_file, self.output_directory_triangulation)
             move_and_overwrite(tmp_predictions_3d_file, self.output_directory_triangulation)
             move_and_overwrite(tmp_confidences_3d_file, self.output_directory_triangulation)
@@ -195,10 +200,30 @@ class Triangulator:
         self.save_triangulation_completed()
 
     def triangulate_chunk(self, start_frame, chunk_i):
+
+
+        if not self.testing:
+            # Load in one file to determine how many frames in this chunk
+            # and check that all cameras have the same number of frames for this chunk.
+            nframes_per_camera_chunk = []
+            for ci, camera in enumerate(self.cameras):
+                camera_2d_row = self.recording_predictions[
+                    (self.recording_predictions.camera == camera)
+                    & (self.recording_predictions.frame == start_frame)
+                ].iloc[0]
+                with h5py.File(camera_2d_row.file, "r") as h5f:
+                    keypoint_coords = np.array(h5f["keypoint_coords"])
+                nframes_per_camera_chunk.append(keypoint_coords.shape[0])
+            assert len(set(nframes_per_camera_chunk)) == 1, "Not all cameras have the same number of frames for chunk {chunk_i}"
+            n_frames_chunk = nframes_per_camera_chunk[0]
+        else:
+            logging.info("Running in testing mode, using only first 5000 frames.")
+            n_frames_chunk = 5000
+
         # determine the end frame
-        end_frame = np.min([self.n_frames, start_frame + self.expected_frames_per_video])
+        # end_frame = np.min([self.n_frames, start_frame + self.expected_frames_per_video])
         chunk_start = int(start_frame)
-        chunk_end = int(end_frame)
+        chunk_end = int(chunk_start + n_frames_chunk)
 
         # for each camera, populate the confidences and positions from hdf5
         confidences_2d_chunk = np.zeros(
@@ -207,8 +232,12 @@ class Triangulator:
         confidences_2d_chunk[:] = np.nan
         positions_2d_chunk = (
             np.zeros((chunk_end - chunk_start, len(self.cameras), self.n_keypoints, 2)) * np.nan
+        )  # nframes, ncameras, nkeypoints, xy
+        positions_reprojected_2d_chunk = (
+            np.zeros((chunk_end - chunk_start, len(self.cameras), self.n_keypoints, 2)) * np.nan
         )
         positions_2d_chunk[:] = np.nan
+        positions_reprojected_2d_chunk[:] = np.nan
         detection_conf_chunk = np.zeros((chunk_end - chunk_start, len(self.cameras))) * np.nan
         detection_conf_chunk[:] = np.nan
         detection_coords_chunk = np.zeros((chunk_end - chunk_start, len(self.cameras), 4)) * np.nan
@@ -225,30 +254,53 @@ class Triangulator:
                 detection_conf = np.array(h5f["detection_conf"])
                 detection_coords = np.array(h5f["detection_coords"])
 
-            positions_2d_chunk[:, ci] = np.squeeze(keypoint_coords)
-            confidences_2d_chunk[:, ci] = np.squeeze(keypoint_conf)
-            detection_coords_chunk[:, ci] = np.squeeze(detection_coords)
-            detection_conf_chunk[:, ci] = np.squeeze(detection_conf)
+            chunk_slice = slice(chunk_start, chunk_end)
+            positions_2d_chunk[:, ci] = np.squeeze(keypoint_coords)[chunk_slice]
+            confidences_2d_chunk[:, ci] = np.squeeze(keypoint_conf)[chunk_slice]
+            confidences_2d_chunk_copy = confidences_2d_chunk.copy()[chunk_slice]
+            detection_coords_chunk[:, ci] = np.squeeze(detection_coords)[chunk_slice]
+            detection_conf_chunk[:, ci] = np.squeeze(detection_conf)[chunk_slice]
         if self.print_nans:
             prop_nan = np.mean(np.isnan(positions_2d_chunk))
-            logger.info(f"\tTotal: Prop 2D keypoints are NaNs: {round(prop_nan, 3)}")
+            logger.info(f"\tInitial prop. 2D keypoints are NaNs: {round(prop_nan, 3)}")
 
-        # remove keypoints that aren't aligned with other cameras
-        positions_2d_chunk, confidences_2d_chunk = leave_one_out_2d_filter(
-            positions_2d_chunk,
-            self.cameras,
-            detection_coords_chunk,
-            self.all_extrinsics,
-            self.all_intrinsics,
-            confidences_2d_chunk,
-            leave_one_out_center_threshold=self.leave_one_out_center_threshold_mm,
-            n_jobs=self.n_jobs,
-            plot_results=False,
-        )
+        # Save a copy of the raw 2D positions (helps in gimbal later)
+        positions_2d_chunk_raw = positions_2d_chunk.copy()
 
+        # remove keypoint detections that are below confidence threshold for each camera
+        keypoint_names = [keypoint_info[i]["name"] for i in keypoint_info.keys()]
+        for ci, camera in enumerate(self.cameras):
+            cam_type = "side" if "side" in camera else camera
+            conf_thresholds = conf_thresholds_by_camera[cam_type]
+            for ki, keypoint in enumerate(keypoint_names):
+                this_thresh = [val for keypoint_type,val in conf_thresholds.items() if keypoint_type in keypoint]
+                assert len(this_thresh) == 1, f"Expected 1 threshold, got {len(this_thresh)}"
+                this_thresh = this_thresh[0]
+                these_confs = confidences_2d_chunk[:, ci, ki]
+                confidences_2d_chunk_copy[:, ci, ki][these_confs < this_thresh] = np.nan
+                positions_2d_chunk[:, ci, ki][these_confs < this_thresh] = np.nan
         if self.print_nans:
             prop_nan = np.mean(np.isnan(positions_2d_chunk))
-            logger.info(f"\tTotal: Prop 2D keypoints are NaNs: {round(prop_nan, 3)}")
+            logger.info(f"\t Prop. 2D keypoint NaNs after conf thresholding: {round(prop_nan, 3)}")
+
+        # JP: this is mostly excluding perfectly good frames, so removing from my pipeline.
+        # Remove entire frames where the keypoint-centroid isn't aligned with the other cameras
+        # positions_2d_chunk, confidences_2d_chunk = leave_one_out_2d_filter(
+        #     positions_2d_chunk,
+        #     self.cameras,
+        #     detection_coords_chunk,
+        #     self.all_extrinsics,
+        #     self.all_intrinsics,
+        #     confidences_2d_chunk,
+        #     leave_one_out_center_threshold=self.leave_one_out_center_threshold_mm,
+        #     n_jobs=self.n_jobs,
+        #     plot_results=False,
+        #     verbose=self.print_nans,
+        # )
+
+        # if self.print_nans:
+        #     prop_nan = np.mean(np.isnan(positions_2d_chunk))
+        #     logger.info(f"\tProp 2D keypoint NaNs after LOO 2D: {round(prop_nan, 3)}")
 
         # compute distance of each point to the median over n samples
         mean_kpt_movement = uniform_filter(
@@ -263,7 +315,7 @@ class Triangulator:
         positions_2d_chunk[np.concatenate([m[:1], m])] = np.nan
         if self.print_nans:
             prop_nan = np.mean(np.isnan(positions_2d_chunk))
-            logger.info(f"\tTotal: Prop 2D keypoints are NaNs: {round(prop_nan, 3)}")
+            logger.info(f"\tProp 2D keypoint NaNs after movement distance filter: {round(prop_nan, 3)}")
 
         # only keep the top k confidence cameras
         #    generally not needed, since we're weighting by confidence in triangulation
@@ -272,13 +324,17 @@ class Triangulator:
                 positions_2d_chunk, confidences_2d_chunk, k=self.keep_top_k
             )
 
+        # set 2d conf copy to nan anywhere the 2d pred is also nan,
+        # so that we can extract the 3d confidences from the 2d confidences that were actually used.
+        confidences_2d_chunk_copy[np.isnan(positions_2d_chunk[...,0])] = np.nan
+
         # compute position in 3D
         positions_3D_chunk = Parallel(n_jobs=self.n_jobs)(
             delayed(mcc.triangulate)(
                 positions_2d_chunk[frame_num, :, :, :],
                 self.all_extrinsics,
                 self.all_intrinsics,
-                confidences_2d_chunk[frame_num],
+                # confidences_2d_chunk[frame_num],
             )
             for frame_num in tqdm(
                 range(len(positions_2d_chunk)), desc="3D triangulation", leave=False
@@ -288,7 +344,7 @@ class Triangulator:
 
         if self.print_nans:
             prop_nan = np.mean(np.isnan(positions_3D_chunk))
-            print(f"\tTotal: Prop 3D keypoints are NaNs: {round(prop_nan, 3)}")
+            print(f"\tProp 3D keypoint NaNs after triangulation: {round(prop_nan, 3)}")
 
         # filter keypoints that are very far from their parent
         positions_3D_chunk = filter_3d_keypoints_based_on_distance_from_parent(
@@ -300,7 +356,7 @@ class Triangulator:
 
         if self.print_nans:
             prop_nan = np.mean(np.isnan(positions_3D_chunk))
-            print(f"\tTotal: Prop 3D keypoints are NaNs: {round(prop_nan, 3)}")
+            print(f"\Prop 3D keypoint NaNs after 3d filter: {round(prop_nan, 3)}")
 
         # get reprojections
         positions_2D_reprojections = np.zeros(positions_2d_chunk.shape) * np.nan
@@ -325,9 +381,11 @@ class Triangulator:
         # populate mmaps
         self.reprojection_errors[chunk_start:chunk_end] = reprojection_errors_chunk
         self.keypoints_2d[chunk_start:chunk_end] = positions_2d_chunk
+        self.keypoints_reproj_2d[chunk_start:chunk_end] = positions_2D_reprojections
+        self.keypoints_raw_2d[chunk_start:chunk_end] = positions_2d_chunk_raw
         self.confidences_2d[chunk_start:chunk_end] = confidences_2d_chunk
         self.keypoints_3d[chunk_start:chunk_end] = positions_3D_chunk
-        self.confidences_3d[chunk_start:chunk_end] = np.nanmedian(confidences_2d_chunk, axis=1)
+        self.confidences_3d[chunk_start:chunk_end] = np.nanmedian(confidences_2d_chunk_copy, axis=1)  # extract 3D confidences only from the 2D confidences that were actually used
 
         # plot reprojection errors
         median_reprojection_errors = np.nanmedian(reprojection_errors_chunk, axis=0)
@@ -382,6 +440,12 @@ class Triangulator:
         predictions_2d_file = (
             tmpdir_path / f"predictions_2d.{keypoints_2d_dtype}.{keypoints_2d_shape_str}.mmap"
         )
+        predictions_reproj_2d_file = (
+            tmpdir_path / f"predictions_reproj_2d.{keypoints_2d_dtype}.{keypoints_2d_shape_str}.mmap"
+        )
+        predictions_raw_2d_file = (
+            tmpdir_path / f"predictions_raw_2d.{keypoints_2d_dtype}.{keypoints_2d_shape_str}.mmap"
+        )
         confidences_2d_file = (
             tmpdir_path / f"confidences_2d.{confidences_2d_dtype}.{confidences_2d_shape_str}.mmap"
         )
@@ -396,6 +460,20 @@ class Triangulator:
         # create memmap to write to
         self.keypoints_2d = np.memmap(
             predictions_2d_file,
+            dtype=keypoints_2d_dtype,
+            mode="w+",
+            shape=keypoints_2d_shape,
+        )
+
+        self.keypoints_reproj_2d = np.memmap(
+            predictions_reproj_2d_file,
+            dtype=keypoints_2d_dtype,
+            mode="w+",
+            shape=keypoints_2d_shape,
+        )
+
+        self.keypoints_raw_2d = np.memmap(
+            predictions_raw_2d_file,
             dtype=keypoints_2d_dtype,
             mode="w+",
             shape=keypoints_2d_shape,
@@ -431,6 +509,8 @@ class Triangulator:
 
         return (
             predictions_2d_file,
+            predictions_reproj_2d_file,
+            predictions_raw_2d_file,
             confidences_2d_file,
             predictions_3d_file,
             confidences_3d_file,
@@ -440,8 +520,11 @@ class Triangulator:
     def load_predictions(self):
         # grab all the predictions 2D h5 files
         predictions_2d_files = list(self.predictions_2d_directory.glob("*.h5"))
-        cam = [i.stem.split(".")[1] for i in predictions_2d_files]
-        frame = [int(i.stem.split(".")[2]) for i in predictions_2d_files]
+        filename_splits = [split_multicam_filename(i) for i in predictions_2d_files]
+        cam = [i["camera"] for i in filename_splits]
+        frame = [i["start_frame"] for i in filename_splits]
+        # cam = [i.stem.split(".")[1] for i in predictions_2d_files]
+        # frame = [int(i.stem.split(".")[2]) for i in predictions_2d_files]
         self.recording_predictions = pd.DataFrame(
             {"camera": cam, "frame": frame, "file": predictions_2d_files}
         )
@@ -548,6 +631,7 @@ def leave_one_out_2d_filter(
     leave_one_out_center_threshold=50,
     n_jobs=-1,
     plot_results=False,
+    verbose=False,
 ):
     """
     Perform leave-one-out filtering on 2D keypoint detections to identify and filter out erroneous detections.
@@ -567,13 +651,16 @@ def leave_one_out_2d_filter(
     tuple: Filtered positions_2D and confidences.
     """
     # points where a new detection is performed
-    detection_changes = np.concatenate(
-        [
-            [0],
-            np.where(np.sum(np.diff(detection_coordinates, axis=0), axis=(1, 2)) > 0)[0],
-            [len(detection_coordinates) - 1],
-        ]
-    )
+    # detection_changes = np.concatenate(
+    #     [
+    #         [0],
+    #         np.where(np.sum(np.diff(detection_coordinates, axis=0), axis=(1, 2)) > 0)[0],
+    #         [len(detection_coordinates) - 1],
+    #     ]
+    # )
+
+    detection_changes = np.arange(0, len(detection_coordinates))
+
     for cami in tqdm(range(len(cameras)), leave=False, desc="camera"):
         other_cams = np.array([i for i in np.arange(len(cameras)) if i != cami])
         # triangulate 3D positions leaving out the main camera
@@ -582,7 +669,7 @@ def leave_one_out_2d_filter(
                 positions_2D[frame_num, other_cams, :],
                 [all_extrinsics[i] for i in other_cams],
                 [all_intrinsics[i] for i in other_cams],
-                confidences[frame_num, other_cams],
+                # confidences[frame_num, other_cams],
             )
             for frame_num in tqdm(detection_changes, desc="L.O.O. 3D triangulation", leave=False)
         )
@@ -596,10 +683,13 @@ def leave_one_out_2d_filter(
             camera_matrix=camera_matrix,
             dist_coefs=dist_coefs,
         )
-        # Calculate median of the reprojections and original predictions
 
+        import pdb; pdb.set_trace()
+
+
+        # Calculate median of the reprojections and original predictions
         LOO_prediction_center_2d = np.nanmedian(LOO_positions_2D_reprojections, axis=1)
-        original_prediction_center_2d = np.median(positions_2D[detection_changes, cami], axis=1)
+        original_prediction_center_2d = np.nanmedian(positions_2D[detection_changes, cami], axis=1)
 
         # Calculate distances between LOO predictions and original predictions
         LOO_original_prediction_distances = np.sqrt(
@@ -608,6 +698,7 @@ def leave_one_out_2d_filter(
                 axis=1,
             )
         )
+        
         # Identify bad detections based on threshold
         bad_detections = np.where(
             (LOO_original_prediction_distances > leave_one_out_center_threshold)
@@ -615,6 +706,8 @@ def leave_one_out_2d_filter(
         )[0]
 
         # Set bad detections to nan and confidences to a very low value
+        if verbose:
+            logger.info(f"Removing {len(bad_detections)} bad detections via centroid LOO from camera {cameras[cami]}")
         for bad_detection_idx in bad_detections:
             if bad_detection_idx + 1 == len(detection_changes):
                 continue

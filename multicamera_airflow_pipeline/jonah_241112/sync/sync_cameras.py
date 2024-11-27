@@ -1,15 +1,20 @@
-import re
-import pandas as pd
-from pathlib import Path
-import numpy as np
-from datetime import datetime, timedelta
-import yaml
+from datetime import timedelta
 import logging
+from pathlib import Path
 import sys
-import cv2
-from multicamera_airflow_pipeline.utils.datetime_utils import extract_datetime_from_folder_name
 
-logging.basicConfig(level=logging.DEBUG)
+import av
+import cv2
+import numpy as np
+import pandas as pd
+import yaml
+
+from multicamera_airflow_pipeline.utils.datetime_utils import (
+    extract_datetime_from_folder_name,
+)
+from multicamera_airflow_pipeline.utils.naming_utils import split_multicam_filename
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
 
@@ -22,6 +27,7 @@ class CameraSynchronizer:
         samplerate,
         trigger_pin=2,
         recompute_completed=False,
+        patterns_to_exclude_from_vids=["azure", "TRIM"],
     ):
         """
         Parameters
@@ -37,6 +43,7 @@ class CameraSynchronizer:
         self.output_directory = Path(output_directory)
         self.trigger_pin = trigger_pin
         self.samplerate = samplerate
+        self.patterns_to_exclude_from_vids = patterns_to_exclude_from_vids
         
         # get the expected interval between frames (in microseconds)
         self.isi_uS = 1 / self.samplerate * 1000 * 1000
@@ -84,20 +91,22 @@ class CameraSynchronizer:
             0,
         ).astype(int)
         self.trigger_states = np.zeros(len(self.trigger_times)).astype(int)
+        self.make_frame_df()
 
     def load_triggerdata(self):
 
         # load triggerdata
         trig_files = list(self.recording_directory.glob("*.triggerdata.csv"))
         if len(trig_files) == 0:
-            self.make_fictive_triggerdata()
-            logger.info("No triggerdata file found. Creating fictive triggerdata.")
+            return False
         else:
             triggerdata_csv = trig_files[0]
             times, pins, states = np.loadtxt(triggerdata_csv, delimiter=",", skiprows=1).T
             self.trigger_times = times[pins == self.trigger_pin]
             self.trigger_states = states[pins == self.trigger_pin].astype(int)
+        self.make_frame_df()
 
+    def make_frame_df(self):
         # ensure that no frames have beeen skipped in the microcontroller trigger
         if np.any(np.diff(self.trigger_times) / self.isi_uS > 1.5):
             max_skip = np.max(np.diff(self.trigger_times) / self.isi_uS)
@@ -111,16 +120,20 @@ class CameraSynchronizer:
         self.frame_df = pd.DataFrame(
             {"trigger_times": self.trigger_times, "trigger_states": self.trigger_states}
         )
+        return True
 
     def load_metadata(self):
         # get the camera metadata csvs
-        metadata_csvs = list(self.recording_directory.glob(f"*.metadata.csv"))
-        camera = [i.stem.split(".")[1] for i in metadata_csvs]
-        frame = [i.stem.split(".")[2] for i in metadata_csvs]
+        metadata_csvs = list(self.recording_directory.glob("*.metadata.csv"))
+        metadata_csvs = [m for m in metadata_csvs if not any([p in m.stem for p in self.patterns_to_exclude_from_vids])]
+        # camera = [i.stem.split(".")[1] for i in metadata_csvs]
+        # frame = [i.stem.split(".")[2] for i in metadata_csvs]
+        cameras = [split_multicam_filename(i.stem)["camera"] for i in metadata_csvs]
+        frames = [split_multicam_filename(i.stem)["start_frame"] for i in metadata_csvs]
         self.metadata_csvs_df = pd.DataFrame(
             {
-                "camera": camera,
-                "frame": np.array(frame).astype(int),
+                "camera": cameras,
+                "frame": np.array(frames).astype(int),
                 "csv_loc": metadata_csvs,
             }
         )
@@ -133,6 +146,7 @@ class CameraSynchronizer:
         videos = list(self.recording_directory.glob("*.mp4"))
         if len(videos) == 0:
             raise FileNotFoundError("No videos found in the recording directory.")
+        videos = [v for v in videos if not any([p in v.stem for p in self.patterns_to_exclude_from_vids])]
         # get the fps of the videos
         fps = []
         for video in videos:
@@ -145,7 +159,7 @@ class CameraSynchronizer:
         else:
             logger.info(f"Expected FPS: {self.samplerate}, Found FPS: {fps}")
             return False
-
+    
     def run(self):
 
         # check if sync already completed
@@ -154,13 +168,20 @@ class CameraSynchronizer:
                 logger.info("Sync already completed")
                 return
 
+
         assert self.check_if_correct_fps(), "Incorrect FPS detected"
 
         # load the config and triggerdata files
         logger.info("Loading video config, metadata, and triggerdata")
         self.load_config()
         self.load_metadata()
-        self.load_triggerdata()
+        try:
+            status = self.load_triggerdata()
+        except:
+            status = False
+        if not status:
+            self.make_fictive_triggerdata()
+            logger.info("No triggerdata file found or triggerdata loading failed. Creating fictive triggerdata.")
 
         # get the frame indexes
         change_m = (
@@ -219,7 +240,7 @@ class CameraSynchronizer:
 
         # save
         self.frame_df.to_csv(self.output_directory / "camera_sync.csv")
-
+        logger.info("Synchronization complete")
 
 def estimate_frame_indexes(timestamps):
     """

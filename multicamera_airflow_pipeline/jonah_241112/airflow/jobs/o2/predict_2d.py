@@ -1,18 +1,14 @@
-from datetime import datetime, timedelta
-import pandas as pd
-import requests
-from io import BytesIO
-from pathlib import Path
-from multicamera_airflow_pipeline.jonah_241112.interface.o2 import O2Runner
 from datetime import datetime
+import logging
+from pathlib import Path
 import textwrap
-import inspect
 import time
+
 import yaml
 
-import logging
+from multicamera_airflow_pipeline.jonah_241112.interface.o2 import O2Runner
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +54,7 @@ def predict_2d(
     )
     output_directory_predictions.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    remote_job_directory = job_directory / current_datetime_str
+    remote_job_directory = job_directory / "2D_predictions" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
     if config["prediction_2d"]["recompute_completed"] == False:

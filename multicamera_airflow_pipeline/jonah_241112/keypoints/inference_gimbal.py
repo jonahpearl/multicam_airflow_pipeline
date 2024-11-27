@@ -1,37 +1,26 @@
-import sys
-import pandas as pd
-from pathlib import Path
-import numpy as np
-import matplotlib.pyplot as plt
-import sys
-import glob
-import joblib
-import numpy as np
-import joblib, json, os, h5py
-import matplotlib.pyplot as plt
-from scipy.ndimage import median_filter
-import scipy.stats
-from tqdm.autonotebook import tqdm
-import time
 import copy
-import jax
-import networkx as nx
-import gimbal.mcmc3d_full
+from pathlib import Path
+import shutil
+import sys
+import tempfile
+
 import gimbal
+import gimbal.mcmc3d_full
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+import joblib
+import matplotlib.pyplot as plt
 import multicam_calibration as mcc
+import numpy as np
 from scipy.signal import medfilt
-import tempfile
-import shutil
+import scipy.stats
+from tqdm.autonotebook import tqdm
 
 jax.config.update("jax_enable_x64", False)
-from tensorflow_probability.substrates.jax.distributions import VonMisesFisher as VMF
-from gimbal.fit import em_step
-from jax import lax, jit
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 from jax.lib import xla_bridge
 
@@ -44,38 +33,22 @@ logger.info(f"JAX devices: {jax.devices()}")
 
 # load skeleton
 from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
-    dataset_info,
-    parents_dict,
+    conf_thresholds_by_camera,
+    gimbal_skeleton,
     keypoint_info,
-    keypoints,
-    keypoints_order,
     kpt_dict,
 )
 
 from .train_gimbal import (
-    generate_gimbal_params,
-    get_edges,
     build_node_hierarchy,
-    generate_initial_positions,
-    # vector_to_angle,
-    # angle_to_rotation_matrix,
-    standardize_poses,
-    compute_directions,
-    # fit_gimbal_model,
-    load_memmap_from_filename,
+    generate_gimbal_params,
     generate_initial_positions,
     generate_outlier_probs,
+    get_edges,
+    load_memmap_from_filename,
     # em_movMF,
-    skeleton,
-)
-
-from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
-    dataset_info,
-    parents_dict,
-    keypoint_info,
-    keypoints,
-    keypoints_order,
-    kpt_dict,
+    # skeleton,
+    standardize_poses,
 )
 
 default_kpt_dict = kpt_dict
@@ -169,19 +142,22 @@ class GimbalInferencer:
             dtype="float32",
         )
 
-        # use all bodyparts
-        self.use_bodyparts = list(np.array(keypoints).astype(str))
-
+        # Find bodyparts, importantly in order
+        keypoint_names = list(kpt_dict.keys())
+        self.use_bodyparts = set([k2 for k1 in gimbal_skeleton for k2 in k1])  # excludes tailtip for weinreb skeleton
+        self.use_bodyparts = [bp for bp in keypoint_names if bp in self.use_bodyparts]  # re-order to match the data
+        self.use_bodyparts_idx_in_preds = sorted([kpt_dict[i] for i in self.use_bodyparts])  # indices into 2d pres / triangulated predictions, eg to exclude tail tip
+        
         # determine node order
-        use_bodyparts_idx = np.array([self.use_bodyparts.index(bp) for bp in self.use_bodyparts])
-        edges = np.array(get_edges(self.use_bodyparts, skeleton))
+        edges = np.array(get_edges(self.use_bodyparts, gimbal_skeleton))
         self.node_order, self.parents = build_node_hierarchy(
-            self.use_bodyparts, skeleton, "spine_low"
+            self.use_bodyparts, gimbal_skeleton, "spine_low"
         )
         edges = np.argsort(self.node_order)[edges]
         self.total_samples = len(self.predictions_3D_mmap)
         self.n_keypoints = len(self.use_bodyparts)
-        self.n_batches = int(np.ceil(self.total_samples / self.batch_size))
+        self.n_batches = np.max([1, np.round(self.total_samples / self.batch_size).astype(int)])  # round so that a few samples over self.batch_size dont get orphaned.
+        self.batches = np.array_split(np.arange(self.total_samples), self.n_batches)
 
         # Create a temporary directory
         with tempfile.TemporaryDirectory() as tmpdirname:
@@ -200,8 +176,8 @@ class GimbalInferencer:
             self.gimbal_kpt_indices = np.array([self.kpt_dict[i] for i in keypoints_order_gimbal])
 
             # run inference for each batch
-            for batch in tqdm(range(self.n_batches), desc="batch"):
-                self.infer_batch(batch)
+            for iBatch in tqdm(range(self.n_batches), desc="batch"):
+                self.infer_batch(iBatch)
 
             # move from tmpdir_path to self.gimbal_output_directory
             shutil.move(temp_gimbal_file, self.gimbal_output_directory / temp_gimbal_file.name)
@@ -214,25 +190,66 @@ class GimbalInferencer:
         with open(self.gimbal_output_directory / "completed.log", "w") as f:
             f.write("completed")
 
-    def infer_batch(self, batch):
+    def infer_batch(self, iBatch):
 
-        batch_start = self.batch_size * batch
-        batch_end = self.batch_size * (batch + 1)
+        # batch_start = self.batch_size * iBatch
+        # batch_end = self.batch_size * (iBatch + 1)
+        batch_start = self.batches[iBatch][0]
+        batch_end = self.batches[iBatch][-1] + 1
+        batch_slice = slice(batch_start, batch_end)
         batch_failed = False
 
-        # load batch into memory
-        confidences_2D = confidences = np.array(self.confidences_2D_mmap[batch_start:batch_end])
-        positions_2D = np.array(self.predictions_2D_mmap[batch_start:batch_end])
-        # confidences_3D = np.array(self.confidences_3D_mmap[batch_start:batch_end])
-        positions_3D = np.array(self.predictions_3D_mmap[batch_start:batch_end])
-        reprojection_errors = np.array(self.reprojection_errors_mmap[batch_start:batch_end])
-        confidences_2D.shape
+        # Load 2D observations. 
+        # [CW suggests this isnt a good idea; will just move the conf remapping sigmoid center around instead] 
+        # Maybe could try using reprojections, or interpolating, for 1 or 2-frame drops.
+            # We use the raw 2D obs if their confidence is high enough.
+            # For low confidence detections, we use reprojections from triangulation.
+        confidences = np.array(self.confidences_2D_mmap[batch_slice])  # (n_samples, n_cameras, n_keypoints)
+        positions_2D = np.array(self.predictions_2D_mmap[batch_slice])  # (n_samples, n_cameras, n_keypoints, 2)
+        outlier_prob = np.zeros_like(confidences)
+        keypoint_names = [keypoint_info[i]["name"] for i in keypoint_info.keys()]
+        for ci, camera in enumerate(self.cameras):
+            
+            # Undistort the 2D points
+            positions_2D[:, ci] = mcc.undistort_points(
+                positions_2D[:, ci],
+                *self.all_intrinsics[ci],
+            )
 
-        # re-order 2d
-        confidences_2D = confidences_2D  # [:, camera_reorder_2d]
-        positions_2D = positions_2D  # [:, camera_reorder_2d]
+            # Re-map confidences to outlier probabilities
+            cam_type = "side" if "side" in camera else camera
+            conf_thresholds = conf_thresholds_by_camera[cam_type]
+            for ki, keypoint in enumerate(keypoint_names):
+                this_thresh = [val for keypoint_type,val in conf_thresholds.items() if keypoint_type in keypoint]
+                assert len(this_thresh) == 1, f"Expected 1 threshold, got {len(this_thresh)}"
+                this_thresh = this_thresh[0]
+                outlier_prob[:,ci,ki] = generate_outlier_probs(
+                    confidences[:, ci, ki],
+                    outlier_prob_bounds=[1e-6, 1 - 1e-6],
+                    conf_sigmoid_center=this_thresh,
+                    conf_sigmoid_gain=self.conf_sigmoid_gain,  # 20
+                )
 
-        # remove outliers
+        # Subsample 2D preds to only the bodyparts we care about
+        confidences = confidences[:, :, self.use_bodyparts_idx_in_preds]
+        positions_2D = positions_2D[:, :, self.use_bodyparts_idx_in_preds]
+        outlier_prob = outlier_prob[:, :, self.use_bodyparts_idx_in_preds]
+
+        # Fill confidence of nans from keypoint detection to lowest value
+        # (prob arent any nans in this anymore since im using raw kps?)
+        confidences[np.any(np.isnan(positions_2D), axis=-1)] = 1e-10
+
+        # Fill in 2D nans with interpolation 
+        # (GIMBAL can't have nans in the 2D observations; setting the confidence really low above makes sure that these observations don't influence the outcome)
+        for cami in range(positions_2D.shape[1]):
+            positions_2D[:, cami] = generate_initial_positions(positions_2D[:, cami])
+        
+        # Load 3D observations and reprojection errors
+        reprojection_errors = np.array(self.reprojection_errors_mmap[batch_slice, :, self.use_bodyparts_idx_in_preds])
+        positions_3D = np.array(self.predictions_3D_mmap[batch_slice, self.use_bodyparts_idx_in_preds, :])
+        
+        # Set outliers in 3D obs to nan
+        # (GIMBAL can have nans in the 3D initial positions)
         outlier_pts = np.sqrt(
             np.sum(
                 (positions_3D - np.expand_dims(np.median(positions_3D, axis=1), 1)) ** 2,
@@ -241,27 +258,23 @@ class GimbalInferencer:
         )
         positions_3D[outlier_pts > self.outlier_thresh_mm] = np.nan
 
-        # initialize poses
+        # Initialize 3D poses (interpolate nans)
         poses = generate_initial_positions(positions_3D)
         del positions_3D
 
-        # rearrage to fit node order
+        # Rearrage keypoints to fit gimbal's node order
         poses = poses[:, self.node_order]
-        confidence = confidences[:, :, self.node_order]
+        confidences = confidences[:, :, self.node_order]
         observations = positions_2D[:, :, self.node_order]
         reprojection_errors = reprojection_errors  # [:, camera_reorder_2d]
 
-        # fill confidence of nans to lowest value
-        confidence[np.any(np.isnan(positions_2D), axis=-1)] = 1e-10
-        # fill in nans in positions 2d
-        for cami in range(observations.shape[1]):
-            observations[:, cami] = generate_initial_positions(observations[:, cami])
-
         # standardize poses
         poses_standard = standardize_poses(poses, self.indices_egocentric)
+        
         # get radii and directions of poses
         radii = np.sqrt(((poses - poses[:, self.parents]) ** 2).sum(-1))
         # directions = compute_directions(poses_standard, self.parents)
+
         # mask out joints that are very far away from their parent joint
         med_radii = np.median(radii, axis=0)
         mad_radii = scipy.stats.median_abs_deviation(radii, axis=0)
@@ -269,11 +282,12 @@ class GimbalInferencer:
         bad_samples_mask = radii > (med_radii + mad_radii * self.thresh_bad_keypoints_mads)
         poses[bad_samples_mask] = np.nan
         poses_standard[bad_samples_mask] = np.nan
+        
         # recompute radii and directions of poses
         radii = np.sqrt(((poses - poses[:, self.parents]) ** 2).sum(-1))
         # directions = compute_directions(poses_standard, self.parents)
 
-        # initialize positions (fill in any nans)
+        # Re-interpolate to fill in nans
         init_positions = generate_initial_positions(poses)
 
         # compute a median filter over the data
@@ -285,14 +299,6 @@ class GimbalInferencer:
         # threshold and re-interpolate
         init_positions[distance_from_median > self.distance_from_median_thresh] = np.nan
         init_positions = generate_initial_positions(init_positions)
-
-        # calculate probabilies that datapoint is noise
-        outlier_prob = generate_outlier_probs(
-            confidence,
-            outlier_prob_bounds=[1e-6, 1 - 1e-6],
-            conf_sigmoid_center=self.conf_sigmoid_center,
-            conf_sigmoid_gain=self.conf_sigmoid_gain,  # 20
-        )
 
         # remove out of frame predictions
         observations[observations < 0] = 0
@@ -338,31 +344,34 @@ class GimbalInferencer:
             difference_from_baseline_history.append(difference_from_baseline)
 
             # wait until training begins to stabilize before averaging over gimbal samples
-            if itr > self.n_initialization_epochs:
+            if (itr > self.n_initialization_epochs) and (itr % 10 == 0):
                 positions_sum += np.array(samples["positions"])
                 tot += 1
                 positions_mean = positions_sum / tot
 
-                fig, axs = plt.subplots(ncols=2, figsize=(10, 3))
-                axs[0].plot(samples["positions"][:1000, 0, 0])
-                axs[0].plot(positions_mean[:1000, 0, 0])
-                axs[0].plot(init_positions[:1000, 0, 0])
-
-                axs[1].plot(samples["positions"][:100, 0, 0])
-                axs[1].plot(positions_mean[:100, 0, 0])
-                axs[1].plot(init_positions[:100, 0, 0])
-                plt.show()
-
+            # Update pbar
             pbar.set_description(
                 "ll={:.2f}, diff={:.2f}".format(log_likelihood, difference_from_baseline)
             )
 
-        if batch_failed == False:
+        if not batch_failed:
+
+            # Save an example image
+            fig, axs = plt.subplots(ncols=2, figsize=(10, 3))
+            axs[0].plot(samples["positions"][:1000, 0, 0])
+            axs[0].plot(positions_mean[:1000, 0, 0])
+            axs[0].plot(init_positions[:1000, 0, 0])
+            axs[1].plot(samples["positions"][:100, 0, 0])
+            axs[1].plot(positions_mean[:100, 0, 0])
+            axs[1].plot(init_positions[:100, 0, 0])
+            fig.savefig(self.gimbal_output_directory / f"example_batch_{iBatch}.png")
+            plt.close(fig)
+
             # save output to gimbal
-            self.gimbal_output[batch_start:batch_end] = positions_mean[
+            self.gimbal_output[batch_slice] = positions_mean[
                 :, np.argsort(self.gimbal_kpt_indices)
             ]
-            self.gimbal_success[batch_start:batch_end] = 1
+            self.gimbal_success[batch_slice] = 1
 
     def initialize_output(self, tmpdir_path):
 
@@ -395,10 +404,12 @@ class GimbalInferencer:
 
         # prepopulate batch with unmodified data
         for batch in tqdm(range(self.n_batches), desc="prepopulating output"):
-            batch_start = self.batch_size * batch
-            batch_end = self.batch_size * (batch + 1)
+            # batch_start = self.batch_size * batch
+            # batch_end = self.batch_size * (batch + 1)
+            batch_start = self.batches[batch][0]
+            batch_end = self.batches[batch][-1] + 1
             self.gimbal_output[batch_start:batch_end] = np.array(
-                self.predictions_3D_mmap[batch_start:batch_end]
+                self.predictions_3D_mmap[batch_start:batch_end, self.use_bodyparts_idx_in_preds, :]
             )
             self.gimbal_success[batch_start:batch_end] = 0
 
@@ -414,7 +425,8 @@ class GimbalInferencer:
     def load_predictions(self):
         confidences_2d_file = list(self.predictions_3d_directory.glob("confidences_2d*.mmap"))[0]
         confidences_3d_file = list(self.predictions_3d_directory.glob("confidences_3d*.mmap"))[0]
-        predictions_2d_file = list(self.predictions_3d_directory.glob("predictions_2d*.mmap"))[0]
+        predictions_2d_file = list(self.predictions_3d_directory.glob("predictions_raw_2d*.mmap"))[0]
+        # predictions_reproj_2d_file = list(self.predictions_3d_directory.glob("predictions_reproj_2d*.mmap"))[0]
         predictions_3d_file = list(self.predictions_3d_directory.glob("predictions_3d*.mmap"))[0]
         reprojection_errors_file = list(
             self.predictions_3d_directory.glob("reprojection_errors*.mmap")
@@ -422,6 +434,7 @@ class GimbalInferencer:
         # load confidences and predictions
         self.confidences_2D_mmap = load_memmap_from_filename(confidences_2d_file)
         self.predictions_2D_mmap = load_memmap_from_filename(predictions_2d_file)
+        # self.predictions_reproj_2D_mmap = load_memmap_from_filename(predictions_reproj_2d_file)
         self.confidences_3D_mmap = load_memmap_from_filename(confidences_3d_file)
         self.predictions_3D_mmap = load_memmap_from_filename(predictions_3d_file)
         self.reprojection_errors_mmap = load_memmap_from_filename(reprojection_errors_file)
@@ -430,6 +443,7 @@ class GimbalInferencer:
             # subset data to first 10k points
             self.confidences_2D_mmap = self.confidences_2D_mmap[:10000]
             self.predictions_2D_mmap = self.predictions_2D_mmap[:10000]
+            # self.predictions_reproj_2D_mmap = self.predictions_reproj_2D_mmap[:10000]
             self.confidences_3D_mmap = self.confidences_3D_mmap[:10000]
             self.predictions_3D_mmap = self.predictions_3D_mmap[:10000]
             self.reprojection_errors_mmap = self.reprojection_errors_mmap[:10000]
@@ -443,14 +457,14 @@ class GimbalInferencer:
                 * self.constant_inlier_variance
             )
 
-        if self.testing:
-            logger.info("Loading test good gimbal params")
-            good_params = joblib.load(
-                Path(
-                    "/n/groups/datta/tim_sainburg/projects/24-04-22-neuropixels-recordings/data/keypoints/mmpose-predictions/M04002/gimbal_params.p"
-                )
-            )
-            logger.info("Loading new test")
+        # if self.testing:
+        #     logger.info("Loading test good gimbal params")
+        #     good_params = joblib.load(
+        #         Path(
+        #             "/n/groups/datta/tim_sainburg/projects/24-04-22-neuropixels-recordings/data/keypoints/mmpose-predictions/M04002/gimbal_params.p"
+        #         )
+        #     )
+        #     logger.info("Loading new test")
             # good_params = joblib.load(
             #    Path(
             #        "/n/groups/datta/tim_sainburg/projects/24-04-22-neuropixels-recordings/notebooks/keypoints/test_gimbal_params.p"

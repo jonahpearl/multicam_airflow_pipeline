@@ -58,6 +58,68 @@ parents_dict = {
     "left_hind_paw_back": "spine_low",
     "right_hind_paw_back": "spine_low",
     "tail_base": "spine_low",
+    "tail_tip": "tail_base",
     "spine_low": "spine_mid",
     "spine_mid": "spine_high",
+    "spine_high": "spine_mid",
 }
+
+default_conf_thresh = 0.4
+conf_thresholds_by_camera = {
+    "bottom": {
+        "spine": 0.8,
+        "ear": 0.8,
+        "forehead": 0.8,
+        "tail": default_conf_thresh,
+        "nose_tip": default_conf_thresh,
+        "hind_paw": default_conf_thresh,
+        "fore_paw": default_conf_thresh,
+    },
+    "top": {
+        "spine": default_conf_thresh,
+        "ear": default_conf_thresh,
+        "forehead": default_conf_thresh,
+        "tail": default_conf_thresh,
+        "nose_tip": default_conf_thresh,
+        "hind_paw": 0.7,
+        "fore_paw": 0.7,
+    },        
+    "side": {
+        "spine": default_conf_thresh,
+        "ear": default_conf_thresh,
+        "forehead": default_conf_thresh,
+        "tail": default_conf_thresh,
+        "nose_tip": default_conf_thresh,
+        "hind_paw": 0.65,
+        "fore_paw": 0.65,
+    },
+}
+
+
+front_keypoints = [
+    "nose_tip",
+    "left_ear",
+    "right_ear",
+    "forehead",
+    "left_fore_paw",
+    "right_fore_paw",
+    "spine_high",
+]
+back_keypoints = [
+    "spine_mid",
+    "spine_low",
+    "tail_base",
+    "left_hind_paw_front",
+    "right_hind_paw_front",
+    "left_hind_paw_back",
+    "right_hind_paw_back",
+]
+side_keypoints = [
+    "left_fore_paw",
+    "right_fore_paw",
+    "left_hind_paw_front",
+    "right_hind_paw_front",
+    "left_hind_paw_back",
+    "right_hind_paw_back",
+    "nose_tip",
+]

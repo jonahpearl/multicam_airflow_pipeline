@@ -12,7 +12,7 @@ import yaml
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def size_normalization(
     )
     output_directory_size_normalization.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    remote_job_directory = job_directory / current_datetime_str
+    remote_job_directory = job_directory / "size_normalization" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
     if config["size_normalization"]["recompute_completed"] == False:

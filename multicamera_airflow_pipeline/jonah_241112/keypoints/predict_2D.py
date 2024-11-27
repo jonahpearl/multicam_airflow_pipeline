@@ -1,23 +1,21 @@
-import numpy as np
-import sys
-from pathlib import Path
-import os
-import h5py
-from tqdm.auto import tqdm
-import logging
-import shutil
-import tempfile
-import cv2
-from datetime import datetime
-import torch
 from datetime import datetime, timedelta
+import logging
+import os
+from pathlib import Path
+import shutil
 import signal
-import multiprocessing
-import traceback
-import textwrap
 import subprocess
+import sys
+import tempfile
+import textwrap
 
-logging.basicConfig(level=logging.DEBUG)
+import cv2
+import h5py
+import numpy as np
+import torch
+from tqdm.auto import tqdm
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
 
@@ -43,6 +41,8 @@ class Inferencer2D:
         use_tensorrt=False,
         ignore_log_files=False,
         recompute_completed=False,
+        tensorrt_dir="/n/groups/datta/Jonah/Local_code_groups/tensorrt_install/TensorRT-8.6.1.6",
+        patterns_to_exclude_from_vids=["azure", "TRIM"],
     ):
 
         self.n_keypoints = n_keypoints
@@ -64,6 +64,8 @@ class Inferencer2D:
         self.tensorrt_rtmpose_model_name = tensorrt_rtmpose_model_name
         self.recompute_completed = recompute_completed
         self.ignore_log_files = ignore_log_files
+        self.tensorrt_dir = tensorrt_dir
+        self.patterns_to_exclude_from_vids = patterns_to_exclude_from_vids
 
         # get the device
         cuda_available = torch.cuda.is_available()
@@ -111,6 +113,7 @@ class Inferencer2D:
                 logger.info(f"Video processing incomplete, running")
 
         self.all_videos = list(self.recording_directory.glob("*.mp4"))
+        self.all_videos = [v for v in self.all_videos if not any([p in v.name for p in self.patterns_to_exclude_from_vids])]
 
         logger.info(f"Processing {len(self.all_videos)} videos")
         assert len(self.all_videos) > 0, f"No videos found in {self.recording_directory}"
@@ -119,7 +122,7 @@ class Inferencer2D:
 
             output_h5_file = self.output_directory_predictions / f"{video_path.stem}.h5"
             if output_h5_file.exists() and not self.recompute_completed:
-                # logger.info(f"Completed, skipping {video_path}")
+                logger.info(f"Completed, skipping {video_path}")
                 continue
 
             # if a log file exists, then this video is being processed by another job
@@ -208,17 +211,25 @@ class Inferencer2D:
                         total_frames={self.expected_video_length_frames},
                     )"""
                     )
+                    
                     # print(sys.executable)
                     # Run the process and capture the output
-                    command = f"module load cuda/11.7 && {sys.executable} -c '{python_script}'"
+                    command = ""
+                    command += "module load gcc/9.2.0\n"
+                    command += "module load cuda/11.7\n"
+                    command += f"TENSORRT_DIR={self.tensorrt_dir}\n"
+                    command += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
+                    # command += 'eval "$(conda shell.bash hook)";\n'
+                    # command += f"conda activate {self.conda_env};\n"
+                    command += f"{sys.executable} -c '{python_script}'"
+                    print(command)
                     process = subprocess.Popen(
-                        # ["python", "-c", python_script],
-                        # [sys.executable, "-c", python_script],
                         command,
                         shell=True,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
+                        executable="/bin/bash",
                     )
 
                     stdout, stderr = process.communicate()
@@ -283,9 +294,9 @@ def predict_video(
     use_tensorrt=False,
     copy_video_locally=False,
 ):
-    from motpy import Detection, MultiObjectTracker
-    from mmpose.apis import inference_topdown
     from mmdet.apis import inference_detector
+    from mmpose.apis import inference_topdown
+    from motpy import Detection, MultiObjectTracker
     import torch
 
     video_path = Path(video_path)
@@ -464,8 +475,8 @@ def load_models(
     pose_estimator_config, pose_estimator_checkpoint, detector_config, detector_checkpoint
 ):
     from mmdet.apis import init_detector
-    from mmpose.utils import adapt_mmdet_pipeline
     from mmpose.apis import init_model as init_pose_estimator
+    from mmpose.utils import adapt_mmdet_pipeline
 
     pose_estimator_config = Path(pose_estimator_config)
     pose_estimator_checkpoint = Path(pose_estimator_checkpoint)
@@ -487,8 +498,8 @@ def load_models(
 
 
 def load_models_tensorrt(tensorrt_detection_model_path, tensorrt_pose_estimator_path):
-    import tensorrt
     from mmdeploy_runtime import Detector, PoseDetector
+    import tensorrt
 
     tensorrt_detection_model_path = Path(tensorrt_detection_model_path)
     tensorrt_pose_estimator_path = Path(tensorrt_pose_estimator_path)

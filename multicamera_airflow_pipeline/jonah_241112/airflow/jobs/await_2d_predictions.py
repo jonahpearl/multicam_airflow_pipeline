@@ -1,17 +1,9 @@
 from datetime import datetime, timedelta
-import pandas as pd
-import requests
-from io import BytesIO
-from pathlib import Path
-from multicamera_airflow_pipeline.jonah_241112.interface.o2 import O2Runner
-from datetime import datetime
-import textwrap
-import inspect
-import time
-import yaml
-
 import logging
-logging.basicConfig(level=logging.DEBUG)
+from pathlib import Path
+import time
+
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +13,7 @@ def await_2d_predictions(
     output_directory,
     recheck_duration_s=60,
     maximum_wait_time_s=10000,
+    patterns_to_exclude_from_vids=["azure", "TRIM"],
 ):
     """This function waits for 2d predictions to complete, before returning"""
 
@@ -31,6 +24,8 @@ def await_2d_predictions(
         Path(recording_row.video_location_on_o2) / recording_row.video_recording_id
     )
     all_videos = list(recording_directory.glob("*.mp4"))
+    # all_videos = [v for v in all_videos if "azure" not in v.stem] #TODO: make this a param
+    all_videos = [v for v in all_videos if not any([p in v.name for p in patterns_to_exclude_from_vids])]
     assert len(all_videos) > 0, f"No videos found in {recording_directory}"
     logger.info(f"Found {len(all_videos)} videos")
 

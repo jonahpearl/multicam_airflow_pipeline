@@ -12,7 +12,7 @@ import yaml
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def run_gimbal(
     gimbal_output_directory = output_directory / "gimbal" / recording_row.video_recording_id
     gimbal_output_directory.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    remote_job_directory = job_directory / current_datetime_str
+    remote_job_directory = job_directory / "gimbal" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
     if config["gimbal"]["recompute_completed"] == False:
@@ -108,7 +108,7 @@ def run_gimbal(
         o2_exclude=config["o2"]["gimbal"]["o2_exclude"],
         o2_qos=config["o2"]["gimbal"]["o2_qos"],
         o2_gres=config["o2"]["gimbal"]["o2_gres"],
-        modules_to_load=["gcc/9.2.0", "cuda/12.1"],
+        modules_to_load=["gcc/9.2.0"],  # if env has cuda installed via pip, dont module load cuda.
     )
 
     runner.python_script = textwrap.dedent(

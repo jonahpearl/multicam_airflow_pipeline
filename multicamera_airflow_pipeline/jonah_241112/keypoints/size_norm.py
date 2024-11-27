@@ -1,37 +1,23 @@
-from joblib import Parallel, delayed
-import numpy as np
-from copy import deepcopy
-import sys
-import pandas as pd
-from pathlib import Path
-import numpy as np
-import networkx as nx
-import matplotlib.pyplot as plt
-import sys
-import glob
-import numpy as np
-import joblib, os, h5py
-import matplotlib.pyplot as plt
-from tqdm.auto import tqdm
 import logging
-import tempfile
+from pathlib import Path
 import shutil
+import sys
+import tempfile
 
-logging.basicConfig(level=logging.DEBUG)
+from joblib import Parallel, delayed
+import matplotlib.pyplot as plt
+import numpy as np
+from tqdm.auto import tqdm
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
 
 from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
-    dataset_info,
-    parents_dict,
-    keypoint_info,
-    skeleton_info,
-    keypoints,
-    keypoints_order,
-    kpt_dict,
+    default_hierarchy,
     default_template_bone_length_mean,
     default_template_bone_length_std,
-    default_hierarchy,
+    kpt_dict,
 )
 
 default_kpt_dict = kpt_dict
@@ -81,6 +67,13 @@ class SizeNormalizer:
         # subsample if desired
         if self.subsample is not None:
             self.predictions_3D_mmap = self.predictions_3D_mmap[self.subsample]
+        
+        # find the keypoints used in gimbal in case we're subsetting the keypoints
+        # the keypoints are already back in the original order after gimbal.
+        gimbal_keypoints_file = list(self.predictions_3d_file.parent.glob("keypoints_order_gimbal.npy"))[0]
+        gimbal_bodyparts_used = np.array(list(np.load(gimbal_keypoints_file)))
+        self.use_bodyparts = np.array([bp for bp in kpt_dict.keys() if bp in gimbal_bodyparts_used])
+
 
     def check_completed(self):
         return (self.size_norm_output_directory / "completed.log").exists()
@@ -89,10 +82,10 @@ class SizeNormalizer:
 
         # skip if completed
         if self.check_completed() & (self.recompute_completed == False):
-            logger.info(f"Size normalization already completed, skipping")
+            logger.info("Size normalization already completed, skipping")
             return
 
-        logger.info(f"Starting size normalization")
+        logger.info("Starting size normalization")
         self.load_predictions_3d()
 
         # Create a temporary directory
@@ -103,55 +96,56 @@ class SizeNormalizer:
                 tmpdir_path
             )
 
-            keypoints = np.array(list(self.kpt_dict.keys()))
+            # list of bodyparts -- use self.use_bodyparts instead
+            # keypoints = np.array(list(self.kpt_dict.keys()))
+            keypoints_to_index = {kpt: i for i, kpt in enumerate(self.use_bodyparts)}
 
-            keypoints_to_index = {kpt: i for i, kpt in enumerate(keypoints)}
             # TODO batch this, costs a lot of memory...
-            kpts = np.array(self.predictions_3D_mmap)
+            coords = np.array(self.predictions_3D_mmap)
 
             # add a 'spine base' to set as the
-            spine_high_idx = np.where(np.array(keypoints) == "spine_high")[0][0]
-            spine_mid_idx = np.where(np.array(keypoints) == "spine_mid")[0][0]
+            spine_high_idx = np.where(np.array(self.use_bodyparts) == "spine_high")[0][0]
+            spine_mid_idx = np.where(np.array(self.use_bodyparts) == "spine_mid")[0][0]
             spine_base_pos = np.expand_dims(
-                (kpts[:, spine_mid_idx] + kpts[:, spine_high_idx]) / 2, 1
+                (coords[:, spine_mid_idx] + coords[:, spine_high_idx]) / 2, 1
             )
-            kpts = np.concatenate([kpts, spine_base_pos], axis=1)
-            keypoints_to_index["spine_base"] = len(keypoints)
+            coords = np.concatenate([coords, spine_base_pos], axis=1)
+            keypoints_to_index["spine_base"] = len(self.use_bodyparts)
 
             # initialize positions (fill in any nans, shouldn't be needed with gimbal)
-            kpts = generate_initial_positions(kpts)
+            coords = generate_initial_positions(coords)
 
             # convert keypoints to a dictionary
             kpts_dict = {}
             for key, k_index in keypoints_to_index.items():
-                kpts_dict[key] = kpts[:, k_index]
+                kpts_dict[key] = coords[:, k_index]
             kpts_dict["joints"] = list(keypoints_to_index.keys())
-            kpts = kpts_dict
+            coords = kpts_dict
 
             # assign hierarchy
-            kpts["hierarchy"] = self.hierarchy
-            kpts["root_joint"] = self.root_joint
+            coords["hierarchy"] = self.hierarchy
+            coords["root_joint"] = self.root_joint
 
             # compute bone lengths and stds
-            kpts = get_bone_lengths(
-                kpts,
+            coords = get_bone_lengths(
+                coords,
                 self.template_bone_length_mean,
                 self.template_bone_length_std,
             )
 
             # create a skeleton to recompute positions from angles
-            kpts = generate_kpt_offsets_and_skeleton(kpts, self.hierarchy)
+            coords = generate_kpt_offsets_and_skeleton(coords, self.hierarchy)
 
             # calculate joint angles and add them in as kpts[joint+'_angles']
-            kpts = calculate_joint_angles_parallel(
-                kpts,
+            coords = calculate_joint_angles_parallel(
+                coords,
                 root_joint=self.root_joint,
                 samples_to_calculate=None,
                 n_jobs=self.n_jobs,
             )
             fig, ax = plt.subplots()
-            sample_kpt = list(kpts.keys())[0]
-            ax.plot(kpts[sample_kpt])
+            sample_kpt = list(coords.keys())[0]
+            ax.plot(coords[sample_kpt])
             ax.set_title(sample_kpt)
             plt.savefig(self.size_norm_output_directory / f"kpt_pos_{sample_kpt}.png")
             if show_plots:
@@ -160,8 +154,8 @@ class SizeNormalizer:
                 plt.close()
 
             # compute new sizes
-            kpts = size_normalize(
-                kpts,
+            coords = size_normalize(
+                coords,
                 template_bone_length_mean=self.template_bone_length_mean,
                 hierarchy=self.hierarchy,
                 root_joint=self.root_joint,
@@ -170,16 +164,16 @@ class SizeNormalizer:
 
             # convert back to array
             recomputed_keypoints = np.stack(
-                [kpts[f"recomputed_{joint}"] for joint in keypoints], axis=1
+                [coords[f"recomputed_{joint}"] for joint in self.use_bodyparts], axis=1
             )
 
             # convert angles back to array
             recomputed_angles = np.stack(
-                [kpts[f"recomputed_angles_{joint}"] for joint in keypoints], axis=1
+                [coords[f"recomputed_angles_{joint}"] for joint in self.use_bodyparts], axis=1
             )
             recomputed_angles[:, :, 2] = (
                 recomputed_angles[:, :, 2]
-                + np.expand_dims(kpts[f"{self.root_joint}_angles"][:, 2], -1)
+                + np.expand_dims(coords[f"{self.root_joint}_angles"][:, 2], -1)
             ) % (2 * np.pi)
             recomputed_angles[:, :, 2][recomputed_angles[:, :, 2] > np.pi] -= 2 * np.pi
 
@@ -268,7 +262,6 @@ def generate_initial_positions(positions):
 def median_filter(kpts, window_size=3):
 
     import copy
-
     filtered = copy.deepcopy(kpts)
 
     from scipy.signal import medfilt
@@ -471,7 +464,6 @@ def remap_to_normal_distribution(x, loc=0, scale=1):
     return normal_values
 
 
-import copy
 
 
 def get_bone_lengths(

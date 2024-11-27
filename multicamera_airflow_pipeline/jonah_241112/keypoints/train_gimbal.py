@@ -1,33 +1,27 @@
-import sys
-import pandas as pd
-from pathlib import Path
-import numpy as np
-import matplotlib.pyplot as plt
-import sys
-import glob
-import joblib
-import numpy as np
-import joblib, json, os, h5py
-import matplotlib.pyplot as plt
-from scipy.ndimage import median_filter
-import scipy.stats
-from tqdm.autonotebook import tqdm
-import time
 import copy
-import jax
-import networkx as nx
-import gimbal.mcmc3d_full
+from pathlib import Path
+import sys
+
 import gimbal
+import gimbal.mcmc3d_full
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+import joblib
+import matplotlib.pyplot as plt
 import multicam_calibration as mcc
+import networkx as nx
+import numpy as np
+import scipy.stats
+from tqdm.autonotebook import tqdm
 
 jax.config.update("jax_enable_x64", False)
-from tensorflow_probability.substrates.jax.distributions import VonMisesFisher as VMF
-from gimbal.fit import em_step
-from jax import lax, jit
 import logging
-logging.basicConfig(level=logging.DEBUG)
+
+from gimbal.fit import em_step
+from tensorflow_probability.substrates.jax.distributions import VonMisesFisher as VMF
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 from jax.lib import xla_bridge
 
@@ -39,7 +33,9 @@ logger.info(f"JAX devices: {jax.devices()}")
 
 # load skeleton
 try:
-    from multicamera_airflow_pipeline.jonah_241112.skeletons.sainburg25pt import dataset_info
+    from multicamera_airflow_pipeline.jonah_241112.skeletons.sainburg25pt import (
+        dataset_info,
+    )
 except:
 
     # Add the directory containing the file to the system path
@@ -55,16 +51,14 @@ default_keypoints = np.array(default_keypoints)
 # load skeleton
 from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
     dataset_info,
-    parents_dict,
+    gimbal_skeleton,
     keypoint_info,
     keypoints,
-    keypoints_order,
     kpt_dict,
-    gimbal_skeleton,
 )
 
 default_keypoints = keypoints
-skeleton = gimbal_skeleton
+# skeleton = gimbal_skeleton
 
 
 class GimbalTrainer:
@@ -196,14 +190,14 @@ class GimbalTrainer:
 
         confidences_2d_file = list(self.predictions_3d_directory.glob("confidences_2d*.mmap"))[0]
         confidences_3d_file = list(self.predictions_3d_directory.glob("confidences_3d*.mmap"))[0]
-        predictions_2d_file = list(self.predictions_3d_directory.glob("predictions_2d*.mmap"))[0]
+        # predictions_2d_file = list(self.predictions_3d_directory.glob("predictions_2d*.mmap"))[0]
         predictions_3d_file = list(self.predictions_3d_directory.glob("predictions_3d*.mmap"))[0]
         reprojection_errors_file = list(
             self.predictions_3d_directory.glob("reprojection_errors*.mmap")
         )[0]
         # load confidences and predictions
         self.confidences_2D_mmap = load_memmap_from_filename(confidences_2d_file)
-        self.predictions_2D_mmap = load_memmap_from_filename(predictions_2d_file)
+        # self.predictions_2D_mmap = load_memmap_from_filename(predictions_2d_file)  # nframes x ncameras x nkeypoints x 2
         self.confidences_3D_mmap = load_memmap_from_filename(confidences_3d_file)
         self.predictions_3D_mmap = load_memmap_from_filename(predictions_3d_file)
         self.reprojection_errors_mmap = load_memmap_from_filename(reprojection_errors_file)
@@ -211,10 +205,10 @@ class GimbalTrainer:
         # load a sample into memory for training
         if self.training_subsample_frames is None:
             self.training_subsample_frames = self.samplerate * 60 * 30
-        self.confidences_2D = confidences = np.array(
+        self.confidences_2D = np.array(
             self.confidences_2D_mmap[: self.training_subsample_frames]
         )
-        self.positions_2D = np.array(self.predictions_2D_mmap[: self.training_subsample_frames])
+        # self.positions_2D = np.array(self.predictions_2D_mmap[: self.training_subsample_frames])  # not used in training
         self.confidences_3D = np.array(self.confidences_3D_mmap[: self.training_subsample_frames])
         self.positions_3D = np.array(self.predictions_3D_mmap[: self.training_subsample_frames])
         self.reprojection_errors = np.array(
@@ -224,19 +218,19 @@ class GimbalTrainer:
     def run(self):
         # skip if finished
         if self.check_completed() and (self.recompute_completed == False):
-            logger.info(f"Gimbal training already completed, skipping")
+            logger.info("Gimbal training already completed, skipping")
             return
 
         logger.info(f"Running gimbal training on {self.gimbal_output_directory}")
 
-        logger.info(f"Loading calibration data")
+        logger.info("Loading calibration data")
         self.load_calibration_data()
 
-        logger.info(f"Loading predictions")
+        logger.info("Loading predictions")
         self.load_predictions()
 
         # remove outliers
-        logger.info(f"Removing outliers")
+        logger.info("Removing outliers")
         outlier_pts = np.sqrt(
             np.sum(
                 (self.positions_3D - np.expand_dims(np.median(self.positions_3D, axis=1), 1)) ** 2,
@@ -251,42 +245,43 @@ class GimbalTrainer:
             self.positions_3D[mask] = np.nan
 
         # fill in nans
-        logger.info(f"Filling in NaNs")
-        for cami in range(self.positions_2D.shape[1]):
-            self.positions_2D[:, cami] = generate_initial_positions(self.positions_2D[:, cami])
+        logger.info("Filling in NaNs")
         self.positions_3D = generate_initial_positions(self.positions_3D)
 
-        poses = self.positions_3D
+        
+        # Get camera order
+        # camera_calibration_order = self.cameras
+        # camera_calibration_order = list(np.array(camera_calibration_order).astype(str))
+
+        # Determine which bodyparts to use, and subset data accordingly
+        poses = self.positions_3D  # nframes x nkeypoints x 3
         bodyparts = self.keypoints
-        camera_calibration_order = self.cameras
-        camera_calibration_order = list(np.array(camera_calibration_order).astype(str))
         bodyparts = list(np.array(bodyparts).astype(str))
-
-        logger.info(f"Standardizing data")
-        # determine node order
-        keypoints = use_bodyparts = bodyparts
-        keypoints = np.array(keypoints)
-        use_bodyparts_idx = np.array([bodyparts.index(bp) for bp in use_bodyparts])
-        edges = np.array(get_edges(use_bodyparts, skeleton))
-        node_order, parents = build_node_hierarchy(use_bodyparts, skeleton, "spine_low")
-        edges = np.argsort(node_order)[edges]
-        keypoints_reorder = np.array(keypoints)[node_order]
-
-        # rearrage to fit node order
-        poses = poses[:, node_order]
-        confidence = self.confidences_2D[:, :, node_order]
-        # observations = self.positions_2D[:, :, node_order]
+        use_bodyparts = set([k2 for k1 in gimbal_skeleton for k2 in k1])  # excludes tailtip for weinreb skeleton
+        use_bodyparts = [bp for bp in bodyparts if bp in use_bodyparts]  # re-order to match the data
+        use_bodyparts_arr = np.array(use_bodyparts)
+        use_bodyparts_idx_in_preds = sorted([kpt_dict[i] for i in use_bodyparts])  # indices into 2d pres / triangulated predictions, eg to exclude tail tip
+        poses = poses[:, use_bodyparts_idx_in_preds]
+        self.reprojection_errors = self.reprojection_errors[:, :, use_bodyparts_idx_in_preds]
 
         # standardize poses
-        # poses = poses[(~np.isnan(poses)).all((1, 2))]
+        logger.info("Standardizing data")
         poses_standard = standardize_poses(poses, self.indices_egocentric)
 
+        # Get GIMBAL node order and re-arrange data accordingly
+        edges = np.array(get_edges(use_bodyparts, gimbal_skeleton))
+        node_order, parents = build_node_hierarchy(use_bodyparts, gimbal_skeleton, "spine_low")
+        edges = np.argsort(node_order)[edges]
+        poses = poses[:, node_order]
+        poses_standard = poses_standard[:, node_order]
+        self.reprojection_errors = self.reprojection_errors[:, :, node_order]
+
         # get triangulation error
-        logger.info(f"Estimating triangulation error & computing variance")
+        logger.info("Estimating triangulation error & computing variance")
         median_error = np.nanmedian(self.reprojection_errors, axis=0)
 
         # save fig of skeleton_distances to gimbal_output_directory
-        fig = plot_skeleton_distances(skeleton, keypoints, node_order, poses_standard)
+        fig = plot_skeleton_distances(gimbal_skeleton, use_bodyparts_arr, node_order, poses_standard)
         fig.savefig(self.gimbal_output_directory / "skeleton_distances.jpg", format="jpg")
         plt.close()
 
@@ -307,7 +302,7 @@ class GimbalTrainer:
             plt.savefig(self.gimbal_output_directory / "joint_directions.jpg")
             plt.close()
 
-        logger.info(f"Running model fit")
+        logger.info("Running model fit")
         # fit gimbal model
         key = jr.PRNGKey(1)
         dirs = jnp.array(directions)
@@ -535,10 +530,23 @@ def generate_gimbal_params(
         "step_size": step_size,
         "num_leapfrog_steps": num_leapfrog_steps,
     }
+
     return gimbal.mcmc3d_full.initialize_parameters(params)
 
 
 def generate_initial_positions(positions):
+    """ Interpolate missing values in a 3D array
+
+    Parameters
+    ----------
+    positions : np.ndarray
+        Array of shape (num_timesteps, num_joints, dim)
+
+    Returns
+    -------
+    init_positions : np.ndarray
+        Array of shape (num_timesteps, num_joints, dim) with missing values interpolated
+    """
     init_positions = np.zeros_like(positions)
     for k in range(positions.shape[1]):
         ix = np.nonzero(~np.isnan(positions[:, k, 0]))[0]

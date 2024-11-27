@@ -1,17 +1,19 @@
 # check if a tensorrt model exists for pose and detection
 #
-import torch
-from pathlib import Path
-from mmpose.registry import DATASETS
-from mmpose.datasets.datasets.base import BaseCocoStyleDataset
-from mmengine.config.config import Config
-import subprocess
-import tempfile
-import os
-import shutil
-import sys
 import logging
-logging.basicConfig(level=logging.DEBUG)
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+from mmengine.config.config import Config
+from mmpose.datasets.datasets.base import BaseCocoStyleDataset
+from mmpose.registry import DATASETS
+import torch
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
 

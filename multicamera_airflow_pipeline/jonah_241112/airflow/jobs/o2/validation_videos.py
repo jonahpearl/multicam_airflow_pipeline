@@ -8,7 +8,7 @@ import yaml
 
 from multicamera_airflow_pipeline.jonah_241112.interface.o2 import O2Runner
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def validation_videos(
     )
     output_directory_val_vids.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    remote_job_directory = job_directory / current_datetime_str
+    remote_job_directory = job_directory / "keypoint_validation_videos" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
     if not config["validation_videos"]["recompute_completed"]:
@@ -69,6 +69,10 @@ def validation_videos(
         output_directory / "triangulation" / recording_row.video_recording_id
     )
 
+    predictions_gimbal_directory = (
+        output_directory / "gimbal" / recording_row.video_recording_id
+    )
+
     camera_calibration_directory = (
         output_directory
         / "camera_calibration"
@@ -81,6 +85,7 @@ def validation_videos(
     params = {
         "predictions_2d_directory": predictions_2d_directory.as_posix(),
         "predictions_triang_directory": predictions_triang_directory.as_posix(),
+        "predictions_gimbal_directory": predictions_gimbal_directory.as_posix(),
         "camera_calibration_directory": camera_calibration_directory.as_posix(),
         "raw_video_directory": raw_video_directory.as_posix(),
         "output_directory_keypoint_vids": output_directory_val_vids.as_posix(),
@@ -115,6 +120,7 @@ def validation_videos(
     creator = KeypointVideoCreator(
         predictions_2d_directory = params['predictions_2d_directory'],
         predictions_triang_directory = params['predictions_triang_directory'],
+        predictions_gimbal_directory = params['predictions_gimbal_directory'],
         raw_video_directory = params['raw_video_directory'],
         output_directory_keypoint_vids = params['output_directory_keypoint_vids'],
         camera_calibration_directory = params['camera_calibration_directory'],
