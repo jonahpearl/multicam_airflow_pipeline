@@ -34,7 +34,7 @@ dag = DAG(
     default_args={
         "owner": "airflow",
         "depends_on_past": False,
-        "start_date": days_ago(1),  # Update to current date
+        "start_date": days_ago(0),  # Update to current date
         "retries": 1,
         "retry_delay": timedelta(minutes=5),
     },
