@@ -78,7 +78,8 @@ def sync_cameras_to_openephys(
     remote_job_directory = job_directory / "openephys_sync" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["sync_ephys"]["recompute_completed"] == False:
+    # if config["sync_ephys"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_ephys_sync_completion(output_directory_ephys_sync, n_expected_streams):
             logger.info(f"Streams found: {n_expected_streams}, quitting")
             return
@@ -98,6 +99,7 @@ def sync_cameras_to_openephys(
     assert ephys_recording_path.exists()
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "recording_directory": recording_directory.as_posix(),
         "ephys_sync_output_directory": output_directory_ephys_sync.as_posix(),
         "samplerate": samplerate,
@@ -137,10 +139,7 @@ def sync_cameras_to_openephys(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.sync.sync_cameras_to_openephys import OpenEphysSynchronizer
     synchronizer = OpenEphysSynchronizer(
-        camera_sync_file =params["camera_sync_file"] ,
-        ephys_recording_path = params["ephys_recording_path"],
-        ephys_sync_output_directory =  params["ephys_sync_output_directory"],
-        camera_samplerate = params["samplerate"],
+        **params,
         **config["sync_ephys"]
     )
     synchronizer.run()

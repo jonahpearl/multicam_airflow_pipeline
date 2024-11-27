@@ -57,7 +57,8 @@ def predict_2d(
     remote_job_directory = job_directory / "2D_predictions" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["prediction_2d"]["recompute_completed"] == False:
+    # if config["prediction_2d"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_2d_completion(output_directory_predictions):
             logger.info("2d prediction completed, quitting")
             return
@@ -73,6 +74,7 @@ def predict_2d(
     tensorrt_model_directory = output_directory / "tensorrt"
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "recording_directory": recording_directory.as_posix(),
         "output_directory_predictions": output_directory_predictions.as_posix(),
         "expected_video_length_frames": int(expected_video_length_frames),
@@ -123,10 +125,7 @@ def predict_2d(
         # grab sync cameras function
         from multicamera_airflow_pipeline.jonah_241112.keypoints.predict_2D import Inferencer2D
         inferencer = Inferencer2D(
-            recording_directory = params["recording_directory"],
-            output_directory_predictions = params["output_directory_predictions"],
-            expected_video_length_frames = params["expected_video_length_frames"],
-            tensorrt_model_directory = params["tensorrt_model_directory"],
+            **params,
             **config["prediction_2d"]
         )
         inferencer.run()

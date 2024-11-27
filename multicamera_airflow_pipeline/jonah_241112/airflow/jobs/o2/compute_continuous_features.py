@@ -58,7 +58,8 @@ def compute_continuous_features(
     remote_job_directory = job_directory / "continuous_features" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["continuous_features"]["recompute_completed"] == False:
+    # if config["continuous_features"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_continuous_features_completion(continuous_features_output_directory):
             logger.info("continuous_features completed, quitting")
             return
@@ -89,10 +90,11 @@ def compute_continuous_features(
     samplerate = recording_row.samplerate
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "continuous_features_output_directory": continuous_features_output_directory.as_posix(),
         "coordinates_egocentric_filename": egocentric_alignment_file.as_posix(),
         "coordinates_arena_filename": arena_alignment_file.as_posix(),
-        "samplerate": samplerate,
+        "framerate": samplerate,
     }
 
     # create the job runner
@@ -122,10 +124,7 @@ def compute_continuous_features(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.keypoints.continuous_variables import ContinuousVariables # run rigid alignment
     continuous_features_estimator = ContinuousVariables(
-        continuous_features_output_directory= params["continuous_features_output_directory"],
-        coordinates_egocentric_filename = params["coordinates_egocentric_filename"],
-        coordinates_arena_filename = params["coordinates_arena_filename"],
-        framerate = params["samplerate"],
+        **params,
         **config["continuous_features"]
     )
     continuous_features_estimator.run()

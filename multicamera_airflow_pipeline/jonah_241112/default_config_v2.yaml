@@ -1,19 +1,19 @@
 sync_cameras:
   trigger_pin: 2
-  recompute_completed: False
+  # recompute_completed: False
 
 sync_ephys:
   npx_samplerate: 30000
   search_window_s: 300
   frame_window: 1000
-  recompute_completed: False
+  # recompute_completed: False
 
 camera_calibration:
   board_shape : [5, 7]
   square_size : 12.5
   n_frames_to_sample : 2000
   n_jobs : 10
-  recompute_completed: False
+  # recompute_completed: False
   camera_names: ["top", "side1", "side2", "side3", "side4", "bottom"]
   sampling_method: null   # use all frames from calibraiton vids
   check_vid_dir_for_completed: True  # whether to check the dir with the videos for calibraiton params; if found, use those.
@@ -30,8 +30,8 @@ triangulation:
   mean_filt_samples: 11
   mean_filt_distance_thresh_px: 150
   perform_top_k_filtering: False
-  recompute_completed: False
-  recompute_completed: False
+  # # recompute_completed: False
+  # # recompute_completed: False
   sub_last_frame: False  # seems to only happen on tim's rig?
 
 size_normalization:
@@ -40,21 +40,21 @@ size_normalization:
   subsample: null
   n_jobs: 5
   plot_steps: True
-  recompute_completed: False
+  # recompute_completed: False
 
 arena_alignment:
   batch_size: 100000
   plot_steps: True
-  recompute_completed: False
+  # recompute_completed: False
 
 egocentric_alignment: 
   batch_size: 20000
   distance_from_median_thresh: 50
   plot_steps: True
-  recompute_completed: False
+  # recompute_completed: False
 
 continuous_features:
-  recompute_completed: False
+  # recompute_completed: False
   speed_kernel_size_ms: 150
   acceleration_kernel_size_ms: 150
   heading_kernel_size_ms: 33
@@ -75,10 +75,10 @@ spikesorting:
   isi_violations_ratio_thresh: 1
   presence_ratio_thresh: 0.9
   plot_samples: True
-  recompute_completed: False
+  # recompute_completed: False
 
 gimbal:
-  recompute_completed: False
+  # recompute_completed: False
   train:
     num_iters_train: 1000
     num_states: 50
@@ -100,7 +100,7 @@ gimbal:
     plot_fit_likelihood: True
     plot_inference_likelihood: False
     remove_samples_with_nans: False
-    recompute_completed: False
+    # recompute_completed: False
   inference:
     num_iters_inference: 100
     n_initialization_epochs: 50
@@ -120,7 +120,7 @@ gimbal:
     batch_size: 216000  # 30 min at 120 fps
     distance_from_median_thresh: 50
     # testing: False
-    recompute_completed: False
+    # recompute_completed: False
 
 prediction_2d:
   pose_estimator_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/config.py"
@@ -135,7 +135,7 @@ prediction_2d:
   use_motpy : True
   n_motpy_tracks : 3
   use_tensorrt : True
-  recompute_completed : False
+  # recompute_completed : False
   ignore_log_files : True
 
 tensorrt_conversion:
@@ -157,7 +157,7 @@ tensorrt_conversion_local:
   conda_env: "/home/peromoseq/anaconda3/envs/mmdeploy"
 
 validation_videos:
-  recompute_completed: False
+  # recompute_completed: False
   max_frames: 7200  # 1 min @ 120 fps
   # max_frames: 240
 

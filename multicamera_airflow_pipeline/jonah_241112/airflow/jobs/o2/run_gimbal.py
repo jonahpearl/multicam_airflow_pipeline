@@ -56,7 +56,8 @@ def run_gimbal(
     remote_job_directory = job_directory / "gimbal" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["gimbal"]["recompute_completed"] == False:
+    # if config["gimbal"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_gimbal_completion(gimbal_output_directory):
             logger.info("gimbal completed, quitting")
             return
@@ -87,6 +88,7 @@ def run_gimbal(
     framerate = recording_row.samplerate
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "gimbal_output_directory": gimbal_output_directory.as_posix(),
         "calibration_folder": calibration_folder.as_posix(),
         "predictions_3d_directory": predictions_3d_directory.as_posix(),
@@ -125,11 +127,8 @@ def run_gimbal(
     from multicamera_airflow_pipeline.jonah_241112.keypoints.inference_gimbal import GimbalInferencer 
     # train gimbal
     gimbal_trainer = GimbalTrainer(
-        gimbal_output_directory=params["gimbal_output_directory"],
-        calibration_folder=params["calibration_folder"],
-        predictions_3d_directory=params["predictions_3d_directory"],
-        samplerate=params["samplerate"],
-        **config["gimbal"]["train"]
+        **params,
+        **config["gimbal"]["train"],
     )
     gimbal_trainer.run()
 

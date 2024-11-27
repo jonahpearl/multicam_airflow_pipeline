@@ -55,7 +55,8 @@ def sync_cameras(
     logger.info("Starting sync cameras")
 
     # check if sync is already completed
-    if config["sync_cameras"]["recompute_completed"] == False:
+    # if config["sync_cameras"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_camera_sync_completion(output_directory_camera_sync):
             logger.info("Camera sync already completed, quitting")
             return
@@ -70,8 +71,9 @@ def sync_cameras(
     samplerate = recording_row.samplerate
     # trigger_pin = recording_row.trigzger_pin
     params = {
+        "recompute_completed":recording_row.overwrite,
         "recording_directory": recording_directory.as_posix(),
-        "output_directory_camera_sync": output_directory_camera_sync.as_posix(),
+        "output_directory": output_directory_camera_sync.as_posix(),
         "samplerate": samplerate,
         # "trigger_pin": trigger_pin,
     }
@@ -110,9 +112,7 @@ def sync_cameras(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.sync.sync_cameras import CameraSynchronizer
     synchronizer = CameraSynchronizer(
-        recording_directory=params["recording_directory"],
-        output_directory=params["output_directory_camera_sync"],
-        samplerate=params["samplerate"],  # camera sample rate
+        **params,
         **config["sync_cameras"],
     )
     synchronizer.run()

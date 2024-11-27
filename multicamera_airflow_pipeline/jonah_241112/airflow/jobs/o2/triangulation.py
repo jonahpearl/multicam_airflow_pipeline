@@ -54,7 +54,8 @@ def triangulation(
     remote_job_directory = job_directory / "triangulation" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["triangulation"]["recompute_completed"] == False:
+    # if config["triangulation"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_triangulation_completion(output_directory_triangulation):
             logger.info("triangulation completed, quitting")
             return
@@ -90,6 +91,7 @@ def triangulation(
     assert camera_calibration_directory.exists()
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "predictions_2d_directory": predictions_2d_directory.as_posix(),
         "output_directory_triangulation": output_directory_triangulation.as_posix(),
         "camera_sync_file": camera_sync_file.as_posix(),
@@ -124,11 +126,7 @@ def triangulation(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.keypoints.triangulation import Triangulator 
     triangulator = Triangulator(
-        predictions_2d_directory = params['predictions_2d_directory'],
-        output_directory_triangulation = params['output_directory_triangulation'],
-        camera_sync_file = params['camera_sync_file'],
-        expected_frames_per_video = params['expected_frames_per_video'],
-        camera_calibration_directory = params['camera_calibration_directory'],
+        **params,
         **config["triangulation"]
     )
     triangulator.run()

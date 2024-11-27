@@ -55,7 +55,8 @@ def validation_videos(
     remote_job_directory = job_directory / "keypoint_validation_videos" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if not config["validation_videos"]["recompute_completed"]:
+    # if not config["validation_videos"]["recompute_completed"]:
+    if not recording_row.overwrite:
         if check_keypoint_videos_completion(output_directory_val_vids):
             logger.info("validation_videos completed, quitting")
             return
@@ -83,6 +84,7 @@ def validation_videos(
     assert camera_calibration_directory.exists()
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "predictions_2d_directory": predictions_2d_directory.as_posix(),
         "predictions_triang_directory": predictions_triang_directory.as_posix(),
         "predictions_gimbal_directory": predictions_gimbal_directory.as_posix(),
@@ -118,12 +120,7 @@ def validation_videos(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.keypoints.validation_videos import KeypointVideoCreator 
     creator = KeypointVideoCreator(
-        predictions_2d_directory = params['predictions_2d_directory'],
-        predictions_triang_directory = params['predictions_triang_directory'],
-        predictions_gimbal_directory = params['predictions_gimbal_directory'],
-        raw_video_directory = params['raw_video_directory'],
-        output_directory_keypoint_vids = params['output_directory_keypoint_vids'],
-        camera_calibration_directory = params['camera_calibration_directory'],
+        **params,
         **config["validation_videos"]
     )
     creator.run()

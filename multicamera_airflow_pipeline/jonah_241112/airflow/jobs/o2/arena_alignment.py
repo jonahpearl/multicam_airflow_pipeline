@@ -57,7 +57,8 @@ def arena_alignment(
     remote_job_directory = job_directory / "arena_alignment" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["arena_alignment"]["recompute_completed"] == False:
+    # if config["arena_alignment"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_arena_alignment_completion(arena_alignment_output_directory):
             logger.info("arena_alignment completed, quitting")
             return
@@ -78,6 +79,7 @@ def arena_alignment(
     duration_requested
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "predictions_3d_file": predictions_3d_file.as_posix(),
         "arena_alignment_output_directory": arena_alignment_output_directory.as_posix(),
     }
@@ -109,9 +111,8 @@ def arena_alignment(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.keypoints.alignment.arena import ArenaAligner 
     arena_aligner = ArenaAligner(
-        predictions_3d_file = params['predictions_3d_file'],
-        arena_alignment_output_directory = params['arena_alignment_output_directory'],
-        **config["arena_alignment"]
+        **params,
+        **config["arena_alignment"],
     )
     arena_aligner.run()
     """

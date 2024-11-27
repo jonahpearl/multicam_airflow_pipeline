@@ -58,7 +58,8 @@ def egocentric_alignment(
     remote_job_directory = job_directory / "egocentric_alignment" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["egocentric_alignment"]["recompute_completed"] == False:
+    # if config["egocentric_alignment"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_egocentric_alignment_completion(
             egocentric_alignment_output_directory_rigid
         ) & check_egocentric_alignment_completion(egocentric_alignment_output_directory_nonrigid):
@@ -81,6 +82,7 @@ def egocentric_alignment(
     duration_requested
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "predictions_3d_file": predictions_3d_file.as_posix(),
         "egocentric_alignment_output_directory_rigid": egocentric_alignment_output_directory_rigid.as_posix(),
         "egocentric_alignment_output_directory_nonrigid": egocentric_alignment_output_directory_nonrigid.as_posix(),
@@ -117,6 +119,7 @@ def egocentric_alignment(
         predictions_3d_file = params['predictions_3d_file'],
         egocentric_alignment_output_directory = params['egocentric_alignment_output_directory_rigid'],
         alignment_method="rigid",
+        recompute_completed=params['recompute_completed'],
         **config["egocentric_alignment"]
     )
     arena_aligner.run()
@@ -126,6 +129,7 @@ def egocentric_alignment(
         predictions_3d_file = params['predictions_3d_file'],
         egocentric_alignment_output_directory = params['egocentric_alignment_output_directory_nonrigid'],
         alignment_method="nonrigid",
+        recompute_completed=params['recompute_completed'],
         **config["egocentric_alignment"]
     )
     arena_aligner.run()

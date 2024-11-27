@@ -58,7 +58,8 @@ def size_normalization(
     remote_job_directory = job_directory / "size_normalization" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["size_normalization"]["recompute_completed"] == False:
+    # if config["size_normalization"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_size_normalization_completion(output_directory_size_normalization):
             logger.info("size_normalization completed, quitting")
             return
@@ -77,6 +78,7 @@ def size_normalization(
     duration_requested
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "size_norm_output_directory": output_directory_size_normalization.as_posix(),
         "predictions_3d_file": predictions_3d_file.as_posix(),
     }
@@ -108,8 +110,7 @@ def size_normalization(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.keypoints.size_norm import SizeNormalizer 
     size_normalizer = SizeNormalizer(
-        size_norm_output_directory = params['size_norm_output_directory'],
-        predictions_3d_file = params['predictions_3d_file'],
+        **params,
         **config["size_normalization"]
     )
     size_normalizer.run()

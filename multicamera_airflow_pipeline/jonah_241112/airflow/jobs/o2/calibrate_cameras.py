@@ -51,7 +51,8 @@ def calibrate_cameras(
 
     # check if sync successfully completed
     logger.info("Checking for calibration completion")
-    if config["camera_calibration"]["recompute_completed"] == False:
+    # if config["camera_calibration"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_calibration_completion(output_directory_camera_calibration):
             logger.info("Calibration completed, quitting")
             return
@@ -59,8 +60,9 @@ def calibrate_cameras(
             logger.info("Calibration incomplete, starting")
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "calibration_video_directory": recording_directory.as_posix(),
-        "output_directory_camera_calibration": output_directory_camera_calibration.as_posix(),
+        "calibration_output_directory": output_directory_camera_calibration.as_posix(),
     }
 
     # create the job runner
@@ -90,8 +92,7 @@ def calibrate_cameras(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.calibration import Calibrator 
     camera_calibrator = Calibrator(
-        calibration_video_directory = params["calibration_video_directory"],
-        calibration_output_directory = params["output_directory_camera_calibration"],
+        **params,
         **config["camera_calibration"]
     )
     camera_calibrator.run()

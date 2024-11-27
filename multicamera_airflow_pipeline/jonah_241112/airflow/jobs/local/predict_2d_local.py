@@ -116,6 +116,7 @@ def predict_2d_local(
     tensorrt_model_directory.mkdir(parents=True, exist_ok=True)
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "recording_directory": recording_directory.as_posix(),
         "output_directory_predictions": output_directory_predictions.as_posix(),
         "expected_video_length_frames": expected_video_length_frames,

@@ -63,7 +63,8 @@ def spikesorting(
     remote_job_directory = job_directory / "spikesorting" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    if config["spikesorting"]["recompute_completed"] == False:
+    # if config["spikesorting"]["recompute_completed"] == False:
+    if not recording_row.overwrite:
         if check_spikesorting_completion(spikesorting_output_directory, n_ephys_streams_expected):
             logger.info("spikesorting completed, quitting")
             return
@@ -80,6 +81,7 @@ def spikesorting(
     ephys_recording_directory = Path(recording_row.ephys_location_on_o2) / recording_row.ephys_id
 
     params = {
+        "recompute_completed":recording_row.overwrite,
         "spikesorting_output_directory": spikesorting_output_directory.as_posix(),
         "ephys_recording_directory": ephys_recording_directory.as_posix(),
     }
@@ -114,8 +116,7 @@ def spikesorting(
     # grab sync cameras function
     from multicamera_airflow_pipeline.jonah_241112.ephys.spikesorting_ks4 import SpikeSorter
     spikesorter = SpikeSorter(
-        ephys_recording_directory= params["ephys_recording_directory"],
-        spikesorting_output_directory = params["spikesorting_output_directory"],
+        **params,
         **config["spikesorting"]
     )
     spikesorter.run()
