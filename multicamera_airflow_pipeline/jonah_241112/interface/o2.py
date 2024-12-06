@@ -61,7 +61,7 @@ class O2Runner:
         self.slurm_script_loc = self.remote_job_directory / f"{self.job_name}.sh"
         self.python_script_loc = self.remote_job_directory / f"{self.job_name}.py"
         self.params_loc = self.remote_job_directory / f"{self.job_name}.params.yaml"
-        self.output_log = self.remote_job_directory / f"{self.job_name}.log"
+        self.output_log = self.remote_job_directory / f"{self.job_name}_jobid_%j.log"
         self.ssh = None
 
         self.establish_ssh_connection()
@@ -108,7 +108,7 @@ class O2Runner:
         slurm_script += f"#SBATCH --cpus-per-task={self.o2_n_cpus}\n"
         slurm_script += f"#SBATCH --mem={self.o2_memory}\n"
         slurm_script += f"#SBATCH --time={self.o2_time_limit}\n"
-        slurm_script += f"#SBATCH --output={self.output_log}_jobid_%j\n\n"
+        slurm_script += f"#SBATCH --output={self.output_log}\n\n"
         if self.o2_exclude is not None:
             slurm_script += f"#SBATCH --exclude={self.o2_exclude}\n"
         if self.o2_qos is not None:
