@@ -10,6 +10,7 @@ import sys
 from multicamera_airflow_pipeline.jonah_241112.airflow.jobs.o2 import (
     sync_cameras,
     sync_cameras_to_openephys,
+    compression,
     predict_2d,
     calibrate_cameras,
     spikesorting,
@@ -35,8 +36,27 @@ from airflow.utils.dates import days_ago
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
 
+"""
+Task names:
+sync_cameras
+sync_cameras_to_openephys
+compression
+predict_2d
+calibrate_cameras
+spikesorting
+triangulation
+run_gimbal
+size_normalization
+arena_alignment
+egocentric_alignment
+compute_continuous_features
+await_2d_predictions
+predict_2d_local
+validation_videos
+"""
 
 sync_cameras_task = task(sync_cameras.sync_cameras, pool="low_compute_pool")
+compress_vid_task = task(compression.compression, pool="low_compute_pool")
 predict_2d_task = task(predict_2d.predict_2d, pool="low_compute_pool")
 sync_cameras_to_openephys_task = task(
     sync_cameras_to_openephys.sync_cameras_to_openephys, pool="low_compute_pool"
@@ -70,10 +90,10 @@ class AirflowDAG:
     def __init__(
         self,
         pipeline_name: str = "jonah_241112",
-        config_file: str = "/n/groups/datta/tim_sainburg/projects/multicamera_airflow_pipeline/multicamera_airflow_pipeline/jonah_241112/default_config_v2.yaml",
+        config_file: str = "/n/groups/datta/Jonah/Local_code_groups/6cam_repos/multicam_airflow_pipeline/multicamera_airflow_pipeline/jonah_241112/default_config_v2.yaml",
         output_directory: str = "/n/groups/datta/kpts_pipeline/jonah_241112/results",
         job_directory: str = "/n/groups/datta/kpts_pipeline/jonah_241112/jobs",
-        spreadsheet_url: str = "https://docs.google.com/spreadsheet/ccc?key=1jACsUmxuJ9Une59qmvzZGc1qXezKhKzD1zho2sEfcrU&output=csv&gid=0",
+        spreadsheet_url: str = "https://docs.google.com/spreadsheet/ccc?key=1n3S9AHRv1dHwJFfSSBoqJJQylmhChuFc8YphX4Sn2Cc&output=csv&gid=0",
         default_args={
             "owner": "airflow",
             "depends_on_past": False,
@@ -128,6 +148,14 @@ class AirflowDAG:
                     self.output_directory,
                     self.config_file,
                 )
+
+                compressed = compress_vid_task(
+                    recording_row,
+                    self.job_directory,
+                    self.output_directory,
+                    self.config_file,
+                )
+
                 if not recording_row["use_local"]:
                     logger.info("Using O2 for 2D prediction")
                     predicted_2d = predict_2d_task(
@@ -214,6 +242,7 @@ class AirflowDAG:
                 )
 
                 # define dependencies
+                compressed >> predicted_2d
                 predicted_2d >> completed_2d
                 [synced_cams, calibrated, completed_2d] >> triangulated
                 synced_cams >> synced_ephys
@@ -224,4 +253,23 @@ class AirflowDAG:
                 [arena_aligned, ego_aligned] >> cont_feats
 
             globals()[dag_id] = generated_dag
+            self.dag_id = dag_id
+            self.dag = generated_dag
             logger.info(f"DAG {dag_id} created")
+
+    def get_all_downstream_tasks(self, task_id):
+        """
+        Return all tasks that are downstream of the given task_id.
+        """
+        if task_id == "nan" or pd.isna(task_id):
+            task_id = "sync_cameras"  # default to the first task in the pipeline 
+        task = self.dag.task_dict.get(task_id)
+        if not task:
+            raise ValueError(f"Task with id {task_id} not found in DAG {self.dag_id}")
+        
+        return task.get_flat_relative_ids()
+
+
+dummy_dag = AirflowDAG()
+dummy_dag.generate_dags()
+# dummy_dag.get_all_downstream_tasks('sync_cameras_task')
