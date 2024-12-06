@@ -58,8 +58,9 @@ def egocentric_alignment(
     remote_job_directory = job_directory / "egocentric_alignment" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    # if config["egocentric_alignment"]["recompute_completed"] == False:
-    if not recording_row.overwrite:
+    from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
+    downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
+    if not recording_row.overwrite or (recording_row.overwrite and ("egocentric_alignment" not in downstream_tasks)):
         if check_egocentric_alignment_completion(
             egocentric_alignment_output_directory_rigid
         ) & check_egocentric_alignment_completion(egocentric_alignment_output_directory_nonrigid):

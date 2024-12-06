@@ -57,13 +57,20 @@ def predict_2d(
     remote_job_directory = job_directory / "2D_predictions" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    # if config["prediction_2d"]["recompute_completed"] == False:
-    if not recording_row.overwrite:
+    from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
+    downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
+    if not recording_row.overwrite or (recording_row.overwrite and ("predict_2d" not in downstream_tasks)):
         if check_2d_completion(output_directory_predictions):
             logger.info("2d prediction completed, quitting")
             return
         else:
             logger.info("2d prediction incomplete, starting")
+    # else:
+    #     if check_2d_completion(output_directory_predictions):
+    #         logger.info("Removing existing 2d prediction output")
+    #         for file in output_directory_predictions.glob("*"):
+    #             file.unlink()
+    #     assert not check_2d_completion(output_directory_predictions)
 
     # duration of video files (useful if videos are not properly muxxed)
     expected_video_length_frames = (
@@ -145,10 +152,7 @@ def predict_2d(
         # grab sync cameras function
         from multicamera_airflow_pipeline.jonah_241112.keypoints.predict_2D import Inferencer2D
         inferencer = Inferencer2D(
-            recording_directory = params["recording_directory"],
-            output_directory_predictions = params["output_directory_predictions"],
-            expected_video_length_frames = params["expected_video_length_frames"],
-            tensorrt_model_directory = params["tensorrt_model_directory"],
+            **params,
             **config["prediction_2d"]
         )
         inferencer.run()
@@ -166,11 +170,12 @@ def predict_2d(
         status = runner.check_job_status()
         if status:
             break
-        if check_2d_completion(output_directory_predictions):
-            logger.info("2D prediction already completed successfully, quitting")
-            # cancels the current job
-            runner.cancel()
-            break
+        # JP: this only seems useful if running things locally, which I won't, so removing this.
+        # if check_2d_completion(output_directory_predictions):
+        #     logger.info("2D prediction already completed successfully, quitting")
+        #     # cancels the current job
+        #     runner.cancel()
+        #     break
         time.sleep(60)
 
     # check if sync successfully completed

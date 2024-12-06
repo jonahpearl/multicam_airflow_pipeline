@@ -55,8 +55,9 @@ def sync_cameras(
     logger.info("Starting sync cameras")
 
     # check if sync is already completed
-    # if config["sync_cameras"]["recompute_completed"] == False:
-    if not recording_row.overwrite:
+    from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
+    downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
+    if not recording_row.overwrite or (recording_row.overwrite and ("sync_cameras" not in downstream_tasks)):
         if check_camera_sync_completion(output_directory_camera_sync):
             logger.info("Camera sync already completed, quitting")
             return

@@ -51,8 +51,9 @@ def calibrate_cameras(
 
     # check if sync successfully completed
     logger.info("Checking for calibration completion")
-    # if config["camera_calibration"]["recompute_completed"] == False:
-    if not recording_row.overwrite:
+    from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
+    downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
+    if not recording_row.overwrite or (recording_row.overwrite and ("calibrate_cameras" not in downstream_tasks)):
         if check_calibration_completion(output_directory_camera_calibration):
             logger.info("Calibration completed, quitting")
             return

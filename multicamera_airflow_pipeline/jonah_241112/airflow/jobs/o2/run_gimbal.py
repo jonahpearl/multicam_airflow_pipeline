@@ -57,12 +57,14 @@ def run_gimbal(
 
     # check if sync successfully completed
     # if config["gimbal"]["recompute_completed"] == False:
-    if not recording_row.overwrite:
+    from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
+    downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
+    if not recording_row.overwrite or (recording_row.overwrite and ("run_gimbal" not in downstream_tasks)):
         if check_gimbal_completion(gimbal_output_directory):
-            logger.info("gimbal completed, quitting")
+            logger.info("run_gimbal completed, quitting")
             return
         else:
-            logger.info("gimbal incomplete, starting")
+            logger.info("run_gimbal not complete, starting")
 
     calibration_folder = (
         output_directory
@@ -134,9 +136,7 @@ def run_gimbal(
 
     # inference gimbal
     gimbal_inferencer = GimbalInferencer(
-        gimbal_output_directory=params["gimbal_output_directory"],
-        calibration_folder=params["calibration_folder"],
-        predictions_3d_directory=params["predictions_3d_directory"],
+        **params,
         **config["gimbal"]["inference"]
     )
     gimbal_inferencer.run()
