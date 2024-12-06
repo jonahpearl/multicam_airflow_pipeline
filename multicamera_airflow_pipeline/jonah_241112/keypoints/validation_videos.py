@@ -248,6 +248,9 @@ class KeypointVideoCreator:
                 dist_coefs=dist_coefs,
             )
 
+            # Median smooth with n=5 (probably would also smooth this way in any analysis using the gimbal points)
+            these_coords_2D = median_filter(these_coords_2D, size=(5, 1, 1))
+
             # Add nans to any keypoints not in gimbal
             # by expanding these_coords_2D on the keypoint axis with nans.
             for idx in self.keypoint_idxs_missing_in_gimbal:
