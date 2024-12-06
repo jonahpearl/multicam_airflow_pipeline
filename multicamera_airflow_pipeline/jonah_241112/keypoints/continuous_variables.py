@@ -1,38 +1,23 @@
-import sys
 import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-logger.info(f"Python interpreter binary location: {sys.executable}")
+from pathlib import Path
+import sys
 
-# general imports
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import shutil
-import tempfile
-import os
-import sys
-from pathlib import Path
-from datetime import datetime
-from tqdm.auto import tqdm
-import json
-import re
 import scipy
-
-# function specific imports
 from scipy.signal import medfilt
-from scipy.stats import circmean
-
+from tqdm.auto import tqdm
 
 # load skeleton
 from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
-    dataset_info,
-    parents_dict,
-    keypoint_info,
-    keypoints,
-    keypoints_order,
     kpt_dict,
+    gimbal_skeleton,
 )
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.info(f"Python interpreter binary location: {sys.executable}")
 
 
 class ContinuousVariables:
@@ -93,13 +78,21 @@ class ContinuousVariables:
         )
         self.coordinates_arena = load_memmap_from_filename(self.coordinates_arena_filename)
 
+        # Find bodyparts, importantly in order.
+        # Eg, if keypoints originally went ABCD, and gimbal exlcuded C,
+        # then self.use_bodyparts would end up as ABD.
+        keypoint_names = list(self.kpt_dict.keys())  # original order of keypoints
+        use_bodyparts = set([k2 for k1 in gimbal_skeleton for k2 in k1])  # excludes tailtip for weinreb skeleton
+        use_bodyparts = [bp for bp in keypoint_names if bp in use_bodyparts]  # re-order to match the data
+        gimbal_kpt_dict = {bp: i for i, bp in enumerate(use_bodyparts)}
+
         logger.info("Computing continuous features")
 
         (feature_df, centroids) = compute_continuous_features(
             coordinates_egocentric=self.coordinates_egocentric,
             coordinates_arena=self.coordinates_arena,
             framerate=self.framerate,
-            kpt_dict=self.kpt_dict,  # dictionary mapping keypoint names to indices
+            kpt_dict=gimbal_kpt_dict,  # dictionary mapping keypoint names to indices
             speed_kernel_size_ms=self.speed_kernel_size_ms,
             acceleration_kernel_size_ms=self.acceleration_kernel_size_ms,
             heading_kernel_size_ms=self.heading_kernel_size_ms,
@@ -126,7 +119,7 @@ class ContinuousVariables:
             self.coordinates_arena,
             centroids=centroids,
             feature_df=feature_df,
-            kpt_dict=kpt_dict,
+            kpt_dict=gimbal_kpt_dict,
         )
         # save plot to output directory
         fig.savefig(self.continuous_features_output_directory / "continuous_features.png")
@@ -412,8 +405,8 @@ def compute_continuous_features(
         "spine_mid",
         "spine_low",
         "tail_base",
-        "left_shoulder",
-        "right_shoulder",
+        # "left_shoulder",
+        # "right_shoulder",
     ]
     haunch_keypoints_indices = [kpt_dict[i] for i in haunch_keypoints]
 
