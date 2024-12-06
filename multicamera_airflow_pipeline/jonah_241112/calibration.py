@@ -9,6 +9,7 @@ import av
 import multicam_calibration as mcc
 import numpy as np
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
 
@@ -311,6 +312,7 @@ class Calibrator:
 def get_video_len(video_path):
     c = av.open(str(video_path))
     return c.streams.video[0].frames
+    
     # Note, this function will not work unless videos are properly muxed
     # reader = OpenCVReader(str(video_path))
     # n_frames = len(reader)
