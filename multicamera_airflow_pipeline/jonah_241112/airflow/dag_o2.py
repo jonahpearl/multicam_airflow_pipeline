@@ -38,9 +38,9 @@ logger.info(f"Python interpreter binary location: {sys.executable}")
 
 """
 Task names:
+compression
 sync_cameras
 sync_cameras_to_openephys
-compression
 predict_2d
 calibrate_cameras
 spikesorting
