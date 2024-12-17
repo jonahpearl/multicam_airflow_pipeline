@@ -4,13 +4,19 @@ from pathlib import Path
 import textwrap
 import time
 
+import av
 import yaml
 
 from multicamera_airflow_pipeline.jonah_241112.interface.o2 import O2Runner
+from multicamera_airflow_pipeline.utils.naming_utils import split_multicam_filename
 
 logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
+
+def get_video_len(vid):
+    c = av.open(Path(vid).as_posix())
+    return c.streams.video[0].frames
 
 
 def convert_minutes_to_hms(minutes_float):
@@ -25,8 +31,16 @@ def convert_minutes_to_hms(minutes_float):
     return f"{hours:02}:{minutes:02}:{seconds:02}"
 
 
-def check_compression_completion(output_directory_log):
-    return (output_directory_log / "completed.txt").exists()
+def check_compression_completion(output_directory_log, all_videos):
+    completed = {}
+    for video in all_videos:
+        cam = split_multicam_filename(video.name)["camera"]
+        if not (output_directory_log / f"completed_{cam}.txt").exists():
+            completed[video] = False
+        else:
+            completed[video] = True
+        
+    return completed
 
 
 def compression(
@@ -56,83 +70,98 @@ def compression(
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "compression" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
-    # check if sync successfully completed
-    from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
-    downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
-    if not recording_row.overwrite or (recording_row.overwrite and ("compression" not in downstream_tasks)):
-        if check_compression_completion(output_directory_log):
-            logger.info("Compression completed, quitting")
-            return
-        else:
-            logger.info("Compression incomplete, starting")
+    # Find all videos to compress
+    all_videos = list(recording_directory.glob("*.mp4"))
+    all_videos = [v for v in all_videos if not any([p in v.name for p in config["compression"]["patterns_to_exclude_from_vids"]])]
+    logger.info(f"Found {len(all_videos)} videos")
+    assert len(all_videos) > 0, f"No videos found in {recording_directory}"
+
+    # check if airflow task is already successfully completed
+    # from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
+    # downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
+    # if not recording_row.overwrite or (recording_row.overwrite and ("compression" not in downstream_tasks)):
+    #     completed_dict = check_compression_completion(output_directory_log, all_videos)
+    #     if all(completed_dict.values()):
+    #         logger.info("Compression completed, quitting")
+    #         return
+    #     else:
+    #         logger.info("Compression incomplete, starting")
 
     params = {
         "recompute_completed":recording_row.overwrite,
-        "recording_directory": recording_directory.as_posix(),
+        # "recording_directory": recording_directory.as_posix(),
         "output_directory_log": output_directory_log.as_posix(),
     }
 
     duration_requested = convert_minutes_to_hms(
-        recording_row.duration_m * config["o2"]["compression"]["o2_runtime_multiplier"]
+        max([
+            recording_row.duration_m * config["o2"]["compression"]["o2_runtime_multiplier"],
+            15,
+        ])
     )
-
-    # create the job runner
-    runner = O2Runner(
-        job_name_prefix=f"{recording_row.video_recording_id}_compression",
-        remote_job_directory=remote_job_directory,
-        conda_env=config["o2"]["compression"]["conda_env"],
-        o2_username=recording_row.username,
-        o2_server="login.o2.rc.hms.harvard.edu",
-        job_params=params,
-        o2_n_cpus=config["o2"]["compression"]["o2_n_cpus"],
-        o2_memory=config["o2"]["compression"]["o2_memory"],
-        o2_time_limit=duration_requested,
-        o2_queue=config["o2"]["compression"]["o2_queue"],
-        modules_to_load=["gcc/9.2.0"],
-    )
-
     
-    runner.python_script = textwrap.dedent(
-        f"""
-        # load params
-        import yaml
-        params_file = "{runner.remote_job_directory / f"{runner.job_name}.params.yaml"}"
-        config_file = "{config_file.as_posix()}"
+    runners = {}
+    for video in all_videos:
+        cam = split_multicam_filename(video.name)["camera"]
 
-        params = yaml.safe_load(open(params_file, 'r'))
-        config = yaml.safe_load(open(config_file, 'r'))
-
-        # grab func
-        from multicamera_airflow_pipeline.jonah_241112.compression import VideoCompressor
-        compressor = VideoCompressor(
-            **params,
-            **config["compression"],
+        # create the job runner
+        runner = O2Runner(
+            job_name_prefix=f"{recording_row.video_recording_id}_{cam}_compression",
+            remote_job_directory=remote_job_directory,
+            conda_env=config["o2"]["compression"]["conda_env"],
+            o2_username=recording_row.username,
+            o2_server="login.o2.rc.hms.harvard.edu",
+            job_params=params,
+            o2_n_cpus=config["o2"]["compression"]["o2_n_cpus"],
+            o2_memory=config["o2"]["compression"]["o2_memory"],
+            o2_time_limit=duration_requested,
+            o2_queue=config["o2"]["compression"]["o2_queue"],
+            modules_to_load=["gcc/9.2.0"],
         )
-        inferencer.run()
-        """
-    )
+    
+        runner.python_script = textwrap.dedent(
+            f"""
+            # load params
+            import yaml
+            params_file = "{runner.remote_job_directory / f"{runner.job_name}.params.yaml"}"
+            config_file = "{config_file.as_posix()}"
 
-    print(runner.python_script)
+            params = yaml.safe_load(open(params_file, 'r'))
+            config = yaml.safe_load(open(config_file, 'r'))
 
-    runner.run()
+            # grab func
+            from multicamera_airflow_pipeline.jonah_241112.compression import VideoCompressor
+            compressor = VideoCompressor(
+                "{video}",
+                **params,
+                **config["compression"],
+            )
+            compressor.run()
+            """
+        )
+
+        print(runner.python_script)
+
+        runner.run()
+        runners[cam] = runner
 
     # wait until the job is finished
     # 10000/60/24 = roughly 1 week
     for i in range(10000):
         # check job status every n seconds
-        status = runner.check_job_status()
+        status = all([runner.check_job_status() for runner in runners.values()]) 
         if status:
             break
         time.sleep(60)
 
     # check if sync successfully completed
-    if check_compression_completion(output_directory_log):
+    completed_dict = check_compression_completion(output_directory_log, all_videos)
+    if all(completed_dict.values()):
         logger.info("Compression completed successfully")
     else:
-        if output_directory_log.exists():
-            for file in output_directory_log.glob("*.log"):
-                # if the file is completed.log, don't remove it
-                if file.name == "completed.log":
-                    continue
-                file.unlink()
+        logger.warning("Compression did not complete successfully.")
+        logger.info("Removing remaining temporary files...")
+        tmp_videos = list(recording_directory.glob("*.tmp.mp4"))
+        for tmp_video in tmp_videos:
+            tmp_video.unlink()
         raise ValueError("Compression did not complete successfully.")
