@@ -1,5 +1,6 @@
 sync_cameras:
   trigger_pin: 2
+  patterns_to_exclude_from_vids: ["azure", "TRIM", "tmp"]
 
 sync_ephys:
   npx_samplerate: 30000
@@ -22,6 +23,7 @@ compression:
   post_comprn_max_kb_per_frame: 25
   crf: 21
   patterns_to_exclude_from_vids: ["azure", "TRIM", "tmp"]
+  fmtgray: True
 
 triangulation:
   n_jobs: 10
@@ -179,7 +181,7 @@ o2:
     o2_memory: "16G"
     o2_n_cpus: 6
     o2_queue: "short"
-    o2_runtime_multiplier: 2.5
+    o2_runtime_multiplier: 5
     conda_env: "/home/jop9552/miniconda3/envs/dataPy_torch2/"
 
   prediction_2d:
