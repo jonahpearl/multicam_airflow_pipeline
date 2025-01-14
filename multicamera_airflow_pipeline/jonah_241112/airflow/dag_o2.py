@@ -1,37 +1,34 @@
 from datetime import datetime, timedelta
-import pandas as pd
-import requests
 from io import BytesIO
-from pathlib import Path
-from datetime import datetime
 import logging
+from pathlib import Path
 import sys
-
-from multicamera_airflow_pipeline.jonah_241112.airflow.jobs.o2 import (
-    sync_cameras,
-    sync_cameras_to_openephys,
-    compression,
-    predict_2d,
-    calibrate_cameras,
-    spikesorting,
-    triangulation,
-    run_gimbal,
-    size_normalization,
-    arena_alignment,
-    egocentric_alignment,
-    compute_continuous_features,
-    validation_videos,
-)
-
-from multicamera_airflow_pipeline.jonah_241112.airflow.jobs.local.predict_2d_local import (
-    predict_2d_local,
-)
-
-from multicamera_airflow_pipeline.jonah_241112.airflow.jobs import await_2d_predictions
 
 from airflow.decorators import task
 from airflow.models.dag import DAG
-from airflow.utils.dates import days_ago
+import numpy as np
+import pandas as pd
+import requests
+
+from multicamera_airflow_pipeline.jonah_241112.airflow.jobs import await_2d_predictions
+from multicamera_airflow_pipeline.jonah_241112.airflow.jobs.local.predict_2d_local import (
+    predict_2d_local,
+)
+from multicamera_airflow_pipeline.jonah_241112.airflow.jobs.o2 import (
+    arena_alignment,
+    calibrate_cameras,
+    compression,
+    compute_continuous_features,
+    egocentric_alignment,
+    predict_2d,
+    run_gimbal,
+    size_normalization,
+    spikesorting,
+    sync_cameras,
+    sync_cameras_to_openephys,
+    triangulation,
+    validation_videos,
+)
 
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
@@ -192,12 +189,12 @@ class AirflowDAG:
                     self.output_directory,
                     self.config_file,
                 )
-                sorted_spikes = spikesorting_task(
-                    recording_row,
-                    self.job_directory,
-                    self.output_directory,
-                    self.config_file,
-                )
+                # sorted_spikes = spikesorting_task(
+                #     recording_row,
+                #     self.job_directory,
+                #     self.output_directory,
+                #     self.config_file,
+                # )
                 triangulated = triangulation_task(
                     recording_row,
                     self.job_directory,
