@@ -102,7 +102,7 @@ class AirflowDAG:
             "email_on_retry": False,
             "retries": 2,
             "is_paused_upon_creation": False,
-            "retry_delay": timedelta(minutes=60),
+            "retry_delay": timedelta(minutes=(60 - np.random.randint(0, 10))),  # jitter the retry delay
         },
         schedule_interval=timedelta(days=1),
     ):
@@ -135,7 +135,7 @@ class AirflowDAG:
                 # schedule_interval=timedelta(days=7),
                 # start_date=days_ago(1),
                 schedule_interval="@once",
-                start_date=datetime.now(),
+                start_date=datetime.now() + timedelta(minutes=np.random.randint(0, 30)),  # jitter the start time
                 catchup=False,
                 is_paused_upon_creation=False,
             ) as generated_dag:
