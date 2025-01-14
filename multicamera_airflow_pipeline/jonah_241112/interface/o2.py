@@ -1,16 +1,36 @@
-from datetime import datetime
 import logging
-from pathlib import Path
-import subprocess
 import sys
-import tempfile
-import time
-
-import paramiko
-import yaml
 
 logger = logging.getLogger(__name__)
 logger.info(f"Python interpreter binary location: {sys.executable}")
+
+from datetime import datetime
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+
+import numpy as np
+import paramiko
+import yaml
+
+
+def parse_squeue_output(output):
+    """Parse the output of the squeue command into a dict with headers / values.
+
+    """
+    lines = output.strip().split('\n')
+    headers = lines[0].split()
+    job_data = {}
+    
+    for line in lines[1:]:
+        fields = line.split(None, len(headers) - 1)
+        job_info = dict(zip(headers, fields))
+        job_id = job_info['JOBID']
+        job_data[job_id] = job_info
+    
+    return job_data
+
 
 class O2Runner:
     """
@@ -24,7 +44,7 @@ class O2Runner:
         conda_env,
         job_params={},
         o2_username="tis697",
-        o2_server="login.o2.rc.hms.harvard.edu",
+        o2_login_server="login.o2.rc.hms.harvard.edu",
         o2_n_cpus=1,
         o2_memory="16G",
         o2_time_limit="4:00:00",
@@ -42,7 +62,7 @@ class O2Runner:
         self.o2_time_limit = o2_time_limit
         self.o2_queue = o2_queue
         self.o2_username = o2_username
-        self.o2_server = o2_server
+        self.o2_login_server = o2_login_server
         self.conda_env = conda_env
         self.job_params = job_params
         self.o2_exclude = o2_exclude
@@ -51,6 +71,7 @@ class O2Runner:
         self.modules_to_load = modules_to_load
         self.do_not_submit = do_not_submit  # don't actually submit
         self.slurm_job_id = None
+        self.ssh_landing_hostname = None
 
         # determine a job id as the current timestamp
         self.job_datetime = datetime.now()
@@ -69,8 +90,20 @@ class O2Runner:
     def report_output_log(self):
         # read the output log and write it to the logger
 
-        # check if the log file exists locally
+        # connect to ssh if needed
+        if self.ssh is None:
+            self.establish_ssh_connection()
+
+        # grab the file if needed
         if not self.output_log.exists():
+            self.copy_file_from_remote(
+                remote_path=self.output_log,
+                local_path=self.output_log,
+            )
+
+        # if we still dont have it for some reason, let the user know
+        if not self.output_log.exists():
+            logger.info(f"(Output log file not found to report error traceback: {self.output_log})")
             return
         else:
             with self.output_log.open("r") as f:
@@ -78,13 +111,15 @@ class O2Runner:
                     logger.info(line.strip())
 
     def run(self):
+
+        # check in case a job is already running with this name
+        # running_jobs_info = self.get_running_jobs_info_from_o2()
+        # for job in running_jobs_info:
+        #     if job["NAME"] == self.job_name:
+
+
         # create the remote job directory
         logger.info(f"Creating remote job directory: {self.remote_job_directory}")
-        # create_folder_on_remote(
-        #    remote_path=self.remote_job_directory,
-        #    username=self.o2_username,
-        #    remote_server=self.o2_server,
-        # )
         self.create_folder_on_remote(self.remote_job_directory)
 
         logger.info(f"Writing job files to remote directory: {self.remote_job_directory}")
@@ -100,6 +135,8 @@ class O2Runner:
             logger.info("do_not_submit is True, not submitting job.")
         else:
             self.submit()
+
+        self.close_ssh_connection()
 
     def write_slurm_script(self):
         slurm_script = "#!/usr/bin/env bash\n"
@@ -126,24 +163,12 @@ class O2Runner:
         with tempfile.NamedTemporaryFile("w", delete=False) as f:
             f.write(slurm_script)
             f.flush()
-            # scp_file_to_remote(
-            #    local_path=f.name,
-            #    remote_path=self.slurm_script_loc,
-            #    username=self.o2_username,
-            #    remote_server=self.o2_server,
-            # )
             self.copy_file_to_remote(local_path=f.name, remote_path=self.slurm_script_loc)
 
     def write_params_file(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as f:
             # save the params dict to a YAML file
             yaml.dump(self.job_params, f)
-            # scp_file_to_remote(
-            #    local_path=f.name,
-            #    remote_path=self.params_loc,
-            #    username=self.o2_username,
-            #    remote_server=self.o2_server,
-            # )
             self.copy_file_to_remote(local_path=f.name, remote_path=self.params_loc)
 
     def write_python_script(self):
@@ -152,12 +177,6 @@ class O2Runner:
         with tempfile.NamedTemporaryFile("w", delete=False) as f:
             f.write(self.python_script)
             f.flush()
-            # scp_file_to_remote(
-            #    local_path=f.name,
-            #    remote_path=self.python_script_loc,
-            #    username=self.o2_username,
-            #    remote_server=self.o2_server,
-            # )
             self.copy_file_to_remote(local_path=f.name, remote_path=self.python_script_loc)
 
     def create_folder_on_remote(self, remote_path):
@@ -191,7 +210,7 @@ class O2Runner:
             # Create an SFTP session from the SSH connection
             sftp = self.ssh.open_sftp()
 
-            logger.info(f"Transferring {local_path} to {self.o2_server}:{remote_path.as_posix()}")
+            logger.info(f"Transferring {local_path} to {self.ssh_landing_hostname}:{remote_path.as_posix()}")
             sftp.put(local_path.as_posix(), remote_path.as_posix())
 
             logger.info(
@@ -204,28 +223,84 @@ class O2Runner:
             logger.error(f"Exception during file transfer: {str(e)}")
             raise
 
+    def copy_file_from_remote(self, remote_path, local_path):
+        local_path = Path(local_path)
+        remote_path = Path(remote_path)
+        if self.ssh is None:
+            raise ConnectionError("SSH connection is not established")
+
+        try:
+            # Create an SFTP session from the SSH connection
+            sftp = self.ssh.open_sftp()
+
+            logger.info(f"Transferring {self.ssh_landing_hostname}:{remote_path.as_posix()} to {local_path}")
+            sftp.get(remote_path.as_posix(), local_path)
+
+            logger.info(
+                f"Successfully transferred {self.ssh_landing_hostname}:{remote_path.as_posix()} to {local_path}"
+            )
+            
+            # Close the SFTP session
+            sftp.close()
+        except Exception as e:
+            logger.error(f"Exception during file transfer: {str(e)}")
+            raise
+
+    def get_running_jobs_info_from_o2(self):
+        # Run the squeue command to find the airflow_ssh_landing job
+        login_ssh = paramiko.SSHClient()  # Connect to the login node
+        login_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        login_ssh.connect(self.o2_login_server, username=self.o2_username)
+        squeue_cmd = "squeue --me -o '%.18i %.9P %.50j %.8u %.2t %.10M %.9l %.6D %R'"
+        stdin, stdout, stderr = login_ssh.exec_command(squeue_cmd)
+        slurm_output = stdout.read().decode()
+        login_ssh.close() # Close the SSH connection to the login node
+        running_jobs = parse_squeue_output(slurm_output)
+        return running_jobs
+
+    def find_ssh_landing_hostname(self):
+        """ Find the hostname of the node where the airflow_ssh_landing job is running.
+            If there is none, use the login node at your own risk.
+        """
+        running_jobs = self.get_running_jobs_info_from_o2()
+        airflow_job = [job for job in running_jobs.values() if job['NAME'] == 'airflow_ssh_landing' and job['ST']=="R"]  # state == running
+        if len(airflow_job) == 0:
+            logging.warn("No airflow_ssh_landing job found, please start one: 'sbatch -p long -t 10-0 --mem 4GB -c 1 -J \"airflow_ssh_landing\" /home/jop9552/idle_forever.sh'")
+            logging.warn("Using login node for now, but this is not good practice and may fail for many simultaneously running jobs.")
+            self.ssh_landing_hostname = self.o2_login_server
+        elif len(airflow_job) >= 1:
+            airflow_job = airflow_job[0]
+            self.ssh_landing_hostname = airflow_job['NODELIST(REASON)'] + ".o2.rc.hms.harvard.edu"
+            logger.info("Found SSH landing job with hostname: " + self.ssh_landing_hostname)
+        
+
     def establish_ssh_connection(self, n_attempts=5, attempt_delay=60):
+        """Establish a sustained connection to the discovered SSH landing node using paramiko.
+        """
+        if self.ssh_landing_hostname is None:
+            self.find_ssh_landing_hostname()
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         connected = False
         ii = 0
         while not connected and ii < n_attempts:
             try:
-                self.ssh.connect(self.o2_server, username=self.o2_username)
+                logger.info(f"Connecting to O2: {self.ssh_landing_hostname}")
+                self.ssh.connect(self.ssh_landing_hostname, username=self.o2_username)
                 connected = True
+                logger.info("SSH connection established.")
             except Exception as e:
                 logger.error(f"Error connecting to O2: {str(e)}")
                 ii += 1
                 logger.info(f"Retrying connection in {attempt_delay} seconds")
                 time.sleep(attempt_delay)
         if not connected:
-            raise ConnectionError("Could not establish SSH connection to O2")
-
-        
+            raise ConnectionError("Could not establish SSH connection to O2") 
 
     def close_ssh_connection(self):
         self.ssh.close()
         self.ssh = None
+        logger.info("SSH connection closed.")
 
     def submit(self):
         expected_slurm_output = "Submitted batch job "
@@ -261,7 +336,18 @@ class O2Runner:
     def check_job_status(self):
 
         if self.ssh is None:
-            raise ConnectionError("SSH connection is not established")
+            self.establish_ssh_connection(n_attempts=10, attempt_delay=np.random.randint(60, 300))
+        
+        # If still couldn't connect, try looking for a new landing hostname.
+        if self.ssh is None:
+            self.find_ssh_landing_hostname()
+            self.establish_ssh_connection(n_attempts=10, attempt_delay=np.random.randint(60, 300))
+
+        # If still couldn't connect, raise an error. It's annoying to fail this way b/c it leaves a job orphaned on O2.
+        # But the alternative is just futily checking job status forever, which would be annoying.
+        if self.ssh is None:
+            raise ConnectionError("Could not establish SSH connection to O2")
+            
 
         if not self.slurm_job_id:
             raise ValueError("slurm_job_id is not set")
@@ -272,67 +358,81 @@ class O2Runner:
         stdin, stdout, stderr = self.ssh.exec_command(check_command)
         slurm_output = stdout.read().decode()[:-1]
         job_state = slurm_output
-        # self.close_ssh_connection()
 
         # Add custom handling based on the job state
+        ret = False
         if job_state == "COMPLETED":
             logger.info("The job has finished successfully.")
-            return True
+            ret = True
         elif job_state == "PENDING":
             logger.info("The job is waiting to be scheduled.")
-            return False
+            
         elif job_state == "RUNNING":
             logger.info("The job is currently running.")
-            return False
+            
         elif job_state == "FAILED":
             logger.info("The job failed.")
             self.report_output_log()
             raise Exception("Job failed.")
+
         elif job_state == "CANCELLED":
             logger.info("The job was cancelled.")
             self.report_output_log()
             raise Exception("Job failed.")
+
         elif job_state == "CANCELLED+":
             logger.info("The job was cancelled.")
             self.report_output_log()
             raise Exception("Job failed.")
+
         elif job_state == "TIMEOUT":
             logger.info("The job has timed out.")
             self.report_output_log()
             raise Exception("Job failed.")
+
         elif job_state == "NODE_FAIL":
             logger.info("The job terminated due to node failure.")
             self.report_output_log()
             raise Exception("Job failed.")
+
         elif job_state == "OUT_OF_MEMORY":
             logger.info("The job was terminated due to exceeding memory limits.")
+
             self.report_output_log()
             raise Exception("Job failed.")
+
         elif job_state == "COMPLETING":
             logger.info("The job is in the process of completing.")
-            return False
+            
         elif job_state == "REQUEUED":
             logger.info("The job was requeued.")
-            return False
+            
         elif job_state == "RESIZING":
             logger.info("The job is being resized.")
-            return False
+            
         elif job_state == "SUSPENDED":
             logger.info("The job is suspended.")
             self.report_output_log()
             raise Exception("Job failed.")
+
         elif job_state == "SPECIAL_EXIT":
             logger.info("The job terminated with a special exit state.")
             self.report_output_log()
             raise Exception("Job failed.")
+
         elif "OUT_OF_ME" in job_state:
             logger.info("The job was terminated due to exceeding memory limits.")
             self.report_output_log()
             raise Exception("Job failed.")
+
         else:
             logger.info(f"Unknown job state: {job_state}")
-            return False
 
+        # Point: Close the SSH connection to free up resources
+        # Counterpoint: O2 ssh connection is fairly finicky, actually, so better to just connect once and stay connected.
+        # self.close_ssh_connection()
+
+        return ret
 
 def create_folder_on_remote(
     remote_path, username="tis697", remote_server="login.o2.rc.hms.harvard.edu"
