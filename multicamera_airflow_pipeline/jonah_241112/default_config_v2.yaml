@@ -195,7 +195,8 @@ o2:
     o2_n_cpus: 4
     o2_queue: "gpu_quad,gpu"
     o2_runtime_multiplier: 10
-    o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197,compute-g-16-254,compute-g-16-255"
+    # o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197,compute-g-16-254,compute-g-16-255"
+    o2_exclude: "compute-g-16-254,compute-g-16-255"
     o2_qos: "gpuquad_qos"
     o2_gres: "gpu:1"
     conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
@@ -205,7 +206,8 @@ o2:
     o2_n_cpus: 20
     o2_queue: "gpu_quad,gpu"
     o2_runtime_multiplier: 4
-    o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197"
+    # o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197"
+    o2_exclude: "compute-g-16-254,compute-g-16-255"
     o2_qos: "gpuquad_qos"
     o2_gres: "gpu:1"
     conda_env: "/n/groups/datta/tim_sainburg/conda_envs/kilosort4"
@@ -215,7 +217,8 @@ o2:
     o2_n_cpus: 2
     o2_queue: "gpu_quad,gpu"
     o2_runtime_multiplier: 2
-    o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197,compute-g-16-254,compute-g-16-255"  # tesla V100's on the 16-254/255 nodes aren't working with the jax 0.4 / cuda 12 install
+    # o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197,compute-g-16-254,compute-g-16-255"  # tesla V100's on the 16-254/255 nodes aren't working with the jax 0.4 / cuda 12 install
+    o2_exclude: "compute-g-16-254,compute-g-16-255"
     o2_qos: "gpuquad_qos"
     o2_gres: "gpu:1"
     conda_env: "/home/jop9552/miniconda3/envs/dataPy_KPMS_v2"
