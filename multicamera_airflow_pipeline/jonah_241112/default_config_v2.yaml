@@ -118,11 +118,14 @@ gimbal:
     distance_from_median_thresh: 50
 
 prediction_2d:
-  pose_estimator_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/config.py"
-  pose_estimator_checkpoint: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/best_PCK_epoch_80.pth"
+  # pose_estimator_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/config.py"
+  # pose_estimator_checkpoint: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/best_PCK_epoch_80.pth"
+  # tensorrt_rtmpose_model_name : 'rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55'
+  pose_estimator_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241216_v2/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-12-16-14-52-59/config.py"
+  pose_estimator_checkpoint: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241216_v2/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-12-16-14-52-59/best_PCK_epoch_90.pth"
+  tensorrt_rtmpose_model_name : 'rtmpose-m_8xb64-210e_ap10k-256x256_24-12-16-14-52-59'
   detector_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmdet/rtmdet_small_8xb32-300e_coco_chronic_24-10-31-12-48-26/config.py"
   detector_checkpoint: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmdet/rtmdet_small_8xb32-300e_coco_chronic_24-10-31-12-48-26/epoch_63.pth"
-  tensorrt_rtmpose_model_name : 'rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55'
   tensorrt_rtmdetection_model_name : 'rtmdet_small_8xb32-300e_coco_chronic_24-10-31-12-48-26'
   n_keypoints : 15
   n_animals : 1
@@ -133,12 +136,15 @@ prediction_2d:
   ignore_log_files : True
 
 tensorrt_conversion:
-  path_to_rmpose_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/config.py"
-  path_to_rmpose_checkpoint: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/best_PCK_epoch_80.pth"
+  # path_to_rmpose_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/config.py"
+  # path_to_rmpose_checkpoint: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55/best_PCK_epoch_80.pth"
+  # rtmpose_model_name: "rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55"
+  path_to_rmpose_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241216_v2/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-12-16-14-52-59/config.py"
+  path_to_rmpose_checkpoint: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241216_v2/rtmpose/rtmpose-m_8xb64-210e_ap10k-256x256_24-12-16-14-52-59/best_PCK_epoch_90.pth"
+  rtmpose_model_name : 'rtmpose-m_8xb64-210e_ap10k-256x256_24-12-16-14-52-59'
   path_to_rtmdetection_config: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmdet/rtmdet_small_8xb32-300e_coco_chronic_24-10-31-12-48-26/config.py"
   path_to_rtmdetection_checkpoint: "/n/groups/datta/6cam_keypoint_networks/mm_pose/Jonah/20241030_v1/rtmdet/rtmdet_small_8xb32-300e_coco_chronic_24-10-31-12-48-26/epoch_63.pth"
   rtmdetection_model_name: "rtmdet_small_8xb32-300e_coco_chronic_24-10-31-12-48-26"
-  rtmpose_model_name: "rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55"
   skeleton_py_file: "/n/groups/datta/Jonah/Local_code_groups/6cam_repos/multicam_airflow_pipeline/multicamera_airflow_pipeline/jonah_241112/skeletons/weinreb15pt.py"
   conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
   path_to_mmdeploy: "/n/groups/datta/Jonah/Local_code_groups/tensorrt_install/mmdeploy"
