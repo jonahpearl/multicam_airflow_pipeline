@@ -1,6 +1,7 @@
 from datetime import datetime
 import logging
 from pathlib import Path
+import random
 import textwrap
 import time
 
@@ -95,7 +96,7 @@ def egocentric_alignment(
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["egocentric_alignment"]["conda_env"],
         o2_username=recording_row.username,
-        o2_server="login.o2.rc.hms.harvard.edu",
+        o2_login_server="login.o2.rc.hms.harvard.edu",
         job_params=params,
         o2_n_cpus=config["o2"]["egocentric_alignment"]["o2_n_cpus"],
         o2_memory=config["o2"]["egocentric_alignment"]["o2_memory"],
@@ -148,7 +149,7 @@ def egocentric_alignment(
         status = runner.check_job_status()
         if status:
             break
-        time.sleep(60)
+        time.sleep(random.randint(300, 400))
 
     # check if sync successfully completed
     if check_egocentric_alignment_completion(

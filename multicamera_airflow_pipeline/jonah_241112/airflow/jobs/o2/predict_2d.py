@@ -1,6 +1,7 @@
 from datetime import datetime
 import logging
 from pathlib import Path
+import random
 import textwrap
 import time
 
@@ -98,7 +99,7 @@ def predict_2d(
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["prediction_2d"]["conda_env"],
         o2_username=recording_row.username,
-        o2_server="login.o2.rc.hms.harvard.edu",
+        o2_login_server="login.o2.rc.hms.harvard.edu",
         job_params=params,
         o2_n_cpus=config["o2"]["prediction_2d"]["o2_n_cpus"],
         o2_memory=config["o2"]["prediction_2d"]["o2_memory"],
@@ -176,7 +177,7 @@ def predict_2d(
         #     # cancels the current job
         #     runner.cancel()
         #     break
-        time.sleep(60)
+        time.sleep(random.randint(300, 400))
 
     # check if sync successfully completed
     if check_2d_completion(output_directory_predictions):

@@ -1,10 +1,12 @@
 from datetime import datetime
 import logging
 from pathlib import Path
+import random
 import textwrap
 import time
 
 import av
+from glob import glob
 import yaml
 
 from multicamera_airflow_pipeline.jonah_241112.interface.o2 import O2Runner
@@ -32,15 +34,41 @@ def convert_minutes_to_hms(minutes_float):
 
 
 def check_compression_completion(output_directory_log, all_videos):
+    """ Check if compression is completed for all videos.
+
+    Parameters
+    ----------
+    output_directory_log : Path
+        Directory where the logs are saved.
+
+    all_videos : list
+        List of all videos to compress.
+
+    Returns
+    -------
+    completed : dict
+        Dictionary of whether compression is completed for each video.
+
+    in_progress : dict
+        Dictionary of whether a log file exists for that video.
+        (Used to infer whether a job has already been tried + failed.)
+    """
     completed = {}
+    in_progress = {}
     for video in all_videos:
         cam = split_multicam_filename(video.name)["camera"]
         if not (output_directory_log / f"completed_{cam}.txt").exists():
-            completed[video] = False
+            completed[cam] = False
         else:
-            completed[video] = True
+            completed[cam] = True
+
+        log_files = list(output_directory_log.glob(f"*.{cam}*_COMPRESSION_log.txt"))
+        if len(log_files) > 0:
+            in_progress[cam] = True
+        else:
+            in_progress[cam] = False
         
-    return completed
+    return completed, in_progress
 
 
 def compression(
@@ -73,44 +101,55 @@ def compression(
     # Find all videos to compress
     all_videos = list(recording_directory.glob("*.mp4"))
     all_videos = [v for v in all_videos if not any([p in v.name for p in config["compression"]["patterns_to_exclude_from_vids"]])]
-    logger.info(f"Found {len(all_videos)} videos")
+    logger.info(f"Found {len(all_videos)} videos: {all_videos}")
     assert len(all_videos) > 0, f"No videos found in {recording_directory}"
+    completed_dict, log_file_exists_dict = check_compression_completion(output_directory_log, all_videos)
+    logger.info(f"Videos already compressed? --> {completed_dict}")
 
     # check if airflow task is already successfully completed
-    # from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
-    # downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
-    # if not recording_row.overwrite or (recording_row.overwrite and ("compression" not in downstream_tasks)):
-    #     completed_dict = check_compression_completion(output_directory_log, all_videos)
-    #     if all(completed_dict.values()):
-    #         logger.info("Compression completed, quitting")
-    #         return
-    #     else:
-    #         logger.info("Compression incomplete, starting")
+    from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
+    downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
+    if not recording_row.overwrite or (recording_row.overwrite and ("compression" not in downstream_tasks)):
+        if all(completed_dict.values()):
+            logger.info("Compression completed, quitting")
+            return
+        else:
+            logger.info("Compression incomplete, starting")
 
     params = {
         "recompute_completed":recording_row.overwrite,
         # "recording_directory": recording_directory.as_posix(),
         "output_directory_log": output_directory_log.as_posix(),
     }
-
-    duration_requested = convert_minutes_to_hms(
-        max([
-            recording_row.duration_m * config["o2"]["compression"]["o2_runtime_multiplier"],
-            15,
-        ])
-    )
     
     runners = {}
     for video in all_videos:
         cam = split_multicam_filename(video.name)["camera"]
 
-        # create the job runner
+        # skip if vid for this camera is completed already
+        if completed_dict[cam]:
+            logger.info(f"Compression for {cam} already completed, skipping")
+            continue
+
+        # Decide how long we need for this video
+        time_in_min = max([
+            recording_row.duration_m * config["o2"]["compression"]["o2_runtime_multiplier"],
+            15,
+        ])
+        if log_file_exists_dict[cam]:
+            logger.info(f"Compression for {cam} already attempted, extending time")
+            time_in_min = time_in_min * 2  # if we've already tried once, just extend the time by a lot
+
+        # Convert to HH:MM:SS
+        duration_requested = convert_minutes_to_hms(time_in_min)
+
+        # Create the job runner
         runner = O2Runner(
             job_name_prefix=f"{recording_row.video_recording_id}_{cam}_compression",
             remote_job_directory=remote_job_directory,
             conda_env=config["o2"]["compression"]["conda_env"],
             o2_username=recording_row.username,
-            o2_server="login.o2.rc.hms.harvard.edu",
+            o2_login_server="login.o2.rc.hms.harvard.edu",
             job_params=params,
             o2_n_cpus=config["o2"]["compression"]["o2_n_cpus"],
             o2_memory=config["o2"]["compression"]["o2_memory"],
@@ -145,6 +184,9 @@ def compression(
         runner.run()
         runners[cam] = runner
 
+    # Wait 5 minutes for the job to start / to let other jobs start without overwhelming the login ssh connection
+    time.sleep(300)
+
     # wait until the job is finished
     # 10000/60/24 = roughly 1 week
     for i in range(10000):
@@ -152,10 +194,10 @@ def compression(
         status = all([runner.check_job_status() for runner in runners.values()]) 
         if status:
             break
-        time.sleep(60)
+        time.sleep(random.randint(300, 400))
 
     # check if sync successfully completed
-    completed_dict = check_compression_completion(output_directory_log, all_videos)
+    completed_dict, _ = check_compression_completion(output_directory_log, all_videos)
     if all(completed_dict.values()):
         logger.info("Compression completed successfully")
     else:

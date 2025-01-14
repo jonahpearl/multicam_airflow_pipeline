@@ -1,16 +1,13 @@
-from datetime import datetime, timedelta
-import pandas as pd
-import requests
-from io import BytesIO
-from pathlib import Path
-from multicamera_airflow_pipeline.jonah_241112.interface.o2 import O2Runner
 from datetime import datetime
+import logging
+from pathlib import Path
+import random
 import textwrap
-import inspect
 import time
+
 import yaml
 
-import logging
+from multicamera_airflow_pipeline.jonah_241112.interface.o2 import O2Runner
 
 logging.basicConfig(level=logging.INFO)
 
@@ -104,7 +101,7 @@ def compute_continuous_features(
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["continuous_features"]["conda_env"],
         o2_username=recording_row.username,
-        o2_server="login.o2.rc.hms.harvard.edu",
+        o2_login_server="login.o2.rc.hms.harvard.edu",
         job_params=params,
         o2_n_cpus=config["o2"]["continuous_features"]["o2_n_cpus"],
         o2_memory=config["o2"]["continuous_features"]["o2_memory"],
@@ -145,7 +142,7 @@ def compute_continuous_features(
         status = runner.check_job_status()
         if status:
             break
-        time.sleep(60)
+        time.sleep(random.randint(300, 400))
 
     # check if sync successfully completed
     if check_continuous_features_completion(continuous_features_output_directory):
