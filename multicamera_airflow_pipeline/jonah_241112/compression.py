@@ -91,6 +91,11 @@ class VideoCompressor:
         self.patterns_to_exclude_from_vids = patterns_to_exclude_from_vids
         self.recompute_completed = recompute_completed        
     
+    def mark_completed(self):
+        # Write file to mark completion for airflow
+        with open(self.output_directory_log / f"completed_{self.camera}.txt", "w") as f:
+            f.write("completed")
+
     def check_completed(self):
         return (self.output_directory_log / f"completed_{self.camera}.txt").exists()
 
@@ -142,6 +147,7 @@ class VideoCompressor:
         # Skip if video is compressed enough already
         if self.check_if_vid_compressed():
             logger.info(f"Video already compressed below threshold of {self.post_comprn_max_kb_per_frame}, skipping..")
+            self.mark_completed()
             return
 
         # Prepare to run compression
@@ -232,8 +238,6 @@ class VideoCompressor:
             logger.info("Replacing original file with compressed file!")
             os.rename(output_vid, self.video)
 
-        # Write file to mark completion for airflow
-        with open(self.output_directory_log / f"completed_{self.camera}.txt", "w") as f:
-            f.write("completed")
+        self.mark_completed()
 
         logger.info("Done.")
