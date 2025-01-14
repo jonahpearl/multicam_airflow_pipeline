@@ -440,10 +440,10 @@ class KeypointVideoCreator:
             bbox_crop_size=self.bbox_crop_size,
         )
 
-        # Compress all the videos
+        # Compress the videos (could compress all of them, but assume the user is mainly interested in the summary ones, and this speeds things up a bit.)
         # (Runs at ~10 fps --> adds another 7200 frames / 10 fps = 720s = 12 minutes x 6 vids = ~1 hr)
-        logging.info("Compressing videos")
-        for vid in self.output_directory_keypoint_vids.glob("*.mp4"):
+        logging.info("Compressing the stitched videos")
+        for vid in self.output_directory_keypoint_vids.glob("*.stitched*.mp4"):
             compressed_vid = vid.with_name(vid.stem + "_compressed.mp4")
             compress_vid_via_ffmpeg(
                 vid,
