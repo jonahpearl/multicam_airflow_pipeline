@@ -163,11 +163,10 @@ class CameraSynchronizer:
     def run(self):
 
         # check if sync already completed
-        if self.recompute_completed == False:
+        if not self.recompute_completed:
             if self.check_completed():
                 logger.info("Sync already completed")
                 return
-
 
         assert self.check_if_correct_fps(), "Incorrect FPS detected"
 
