@@ -160,10 +160,9 @@ validation_videos:
   max_frames: 7200  # 1 min @ 120 fps
   # max_frames: 240
 
-
 o2:
   sync_cameras:
-    o2_memory: "8G"
+    o2_memory: "2G"
     o2_n_cpus: 1
     o2_queue: "short"
     o2_runtime_multiplier: 0.05
@@ -184,14 +183,14 @@ o2:
     conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
 
   compression:
-    o2_memory: "16G"
+    o2_memory: "2G"
     o2_n_cpus: 6
     o2_queue: "short"
-    o2_runtime_multiplier: 5
+    o2_runtime_multiplier: 5.25
     conda_env: "/home/jop9552/miniconda3/envs/dataPy_torch2/"
 
   prediction_2d:
-    o2_memory: "16G"
+    o2_memory: "8G"
     o2_n_cpus: 4
     o2_queue: "gpu_quad,gpu"
     o2_runtime_multiplier: 10
