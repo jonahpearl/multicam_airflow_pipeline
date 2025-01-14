@@ -107,7 +107,7 @@ class Inferencer2D:
 
         if self.recompute_completed == False:
             if self.check_completed():
-                logger.info(f"Video processing completed, quitting")
+                logger.info(f"Video processing already completed, quitting")
                 return
             else:
                 logger.info(f"Video processing incomplete, running")
@@ -416,7 +416,10 @@ def predict_video(
                 detection_coords[frame_id] = bboxes_motpy
                 detection_conf[frame_id] = confs_motpy
                 if use_tensorrt:
-                    poses = pose_estimator(frame, bboxes_motpy.astype(int))
+                    try:
+                        poses = pose_estimator(frame, bboxes_motpy.astype(int))
+                    except Exception as e:
+                        logger.error(f"Failed at frame {frame_id}, shape {frame.shape}: {e}")
                     keypoint_coords[frame_id] = poses[:n_animals, :, :2]
                     keypoint_conf[frame_id] = poses[:n_animals, :, 2]
                 else:
