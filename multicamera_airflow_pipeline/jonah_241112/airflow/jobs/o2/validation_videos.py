@@ -56,8 +56,9 @@ def validation_videos(
     remote_job_directory = job_directory / "keypoint_validation_videos" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
     # check if sync successfully completed
-    # if not config["validation_videos"]["recompute_completed"]:
-    if not recording_row.overwrite:
+    from multicamera_airflow_pipeline.jonah_241112.airflow.dag_o2 import dummy_dag
+    downstream_tasks = dummy_dag.get_all_downstream_tasks(recording_row.overwrite_from) | set([recording_row.overwrite_from])
+    if not recording_row.overwrite or (recording_row.overwrite and ("validation_videos" not in downstream_tasks)):
         if check_keypoint_videos_completion(output_directory_val_vids):
             logger.info("validation_videos completed, quitting")
             return
