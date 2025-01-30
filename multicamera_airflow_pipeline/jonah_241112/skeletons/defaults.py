@@ -28,38 +28,40 @@ keypoints_order = keypoints
 kpt_dict = {j: i for i, j in enumerate(keypoints_order)}
 
 # all mice will be projected into this template
+# lengths are from the keypoint to its parent in the hierarchy below
+# where: parent = hierarchy[keypoint][0]
 default_template_bone_length_mean = {
-    "spine_low": 20.5,
-    "tail_base": 12.3,
-    "spine_mid": 9.9,
-    "spine_high": 9.9,
-    "left_ear": 17.9,
-    "right_ear": 17.9,
-    "forehead": 18.6,
-    "nose_tip": 19.3,
-    "left_fore_paw": 4.8,
-    "right_fore_paw": 4.8,
-    "left_hind_paw_back": 14.6,
-    "left_hind_paw_front": 13.9,
-    "right_hind_paw_back": 14.6,
-    "right_hind_paw_front": 13.9,
+    "spine_low": 23.7,
+    "tail_base": 12.8,
+    "spine_mid": 11.55,
+    "spine_high": 11.55,
+    "left_ear": 19.8,
+    "right_ear": 19.8,
+    "forehead": 20.4,
+    "nose_tip": 15.1,
+    "left_fore_paw": 34.2,
+    "right_fore_paw": 34.2,
+    "left_hind_paw_back": 25.6,
+    "left_hind_paw_front": 11.2,
+    "right_hind_paw_back": 25.6,
+    "right_hind_paw_front": 11.2,
 }
 
 default_template_bone_length_std = {
-    "tail_base": 0.9,
-    "spine_low": 1.6,
+    "tail_base": 1.1,
+    "spine_low": 1.8,
     "spine_mid": 1.0,
     "spine_high": 1.0,
-    "left_ear": 1.1,
-    "right_ear": 1.1,
-    "forehead": 1.6,
-    "nose_tip": 1.3,
-    "left_fore_paw": 1.0,
-    "right_fore_paw": 1.0,
-    "left_hind_paw_back": 1.3,
-    "left_hind_paw_front": 1.6,
-    "right_hind_paw_back": 1.3,
-    "right_hind_paw_front": 1.6,
+    "left_ear": 1.55,
+    "right_ear": 1.55,
+    "forehead": 1.3,
+    "nose_tip": 1.15,
+    "left_fore_paw": 3.6,
+    "right_fore_paw": 3.6,
+    "left_hind_paw_back": 3.3,
+    "left_hind_paw_front": 0.83,
+    "right_hind_paw_back": 3.3,
+    "right_hind_paw_front": 0.83,
     
 }
 # path to get back to spine_base from each keypoint
