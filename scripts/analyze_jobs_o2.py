@@ -1,43 +1,73 @@
+import re
 import sys
 
 import numpy as np
 from o2_utils.slurm import evaluate_resource_usage
+from tqdm.auto import tqdm
 import yaml
 
 
-def main(airflow_logs_file):
+def main(airflow_logs_file, dag_name_regex=None):
+    """ Analyze the jobs in the airflow logs file.
+
+    Args
+    ----
+    airflow_logs_file : str
+        Path to the airflow logs file. (See `scripts/export_logs_from_airflow.py`.)
+
+    dag_name_regex : str, optional
+        If provided, only analyze the DAGs whose names match this regex.
+
+    Returns
+    -------
+    None
+    """
+
+    print(f"Analyzing jobs from {airflow_logs_file}...")
+
     # Read the logs
     with open(airflow_logs_file, "r") as f:
         logs = yaml.safe_load(f)
 
     tasks_to_analyze = [
-        "arena_alignment",
-        "compute_continuous_features",
-        "egocentric_alignment",
+       "compression",
         "predict_2d",
+        "triangulation",
         "run_gimbal",
         "size_normalization",
-        # "spikesorting",
-        "triangulation",
+        "arena_alignment",
+        "egocentric_alignment",
+        "compute_continuous_features",
+       "validation_videos",
     ]
 
+    # Sub-select DAGs of interest
+    if dag_name_regex is not None:
+        logs = {
+            dag_name: v
+            for dag_name, v in logs.items()
+            if re.match(dag_name_regex, dag_name)
+        }
+        print(f"Sub-selected {len(logs)} DAGs: {list(logs.keys())}")
+
+
     # See how long each task took relative to the time requested
-    for task in tasks_to_analyze:
+    for task in tqdm(tasks_to_analyze, desc="Airflow steps"):
         time_fractions = []
         mem_fractions = []
         jobids = []
-        for run_name, run_info in logs.items():
+        for dag_name, run_info in tqdm(logs.items(), desc="Runs", leave=False):
             # Skip stuff we dont want
             if (
-                run_name == "refresh_pipeline_dag"
+                dag_name == "refresh_pipeline_dag"
                 or task not in run_info
                 or run_info[task]["job_id"] == "Not found"
             ):
                 continue
-
+            
             # Get the job info
             jobid = run_info[task]["job_id"]
-            jobinfo = evaluate_resource_usage(jobid, plot=False)
+            jobinfo = evaluate_resource_usage(jobid, plot=False)  # calls squeue in bkgnd
 
             # If job isn't finished w status COMPLETED, will not be returned in the dict, so skip that
             if jobid not in jobinfo:
@@ -67,4 +97,8 @@ def main(airflow_logs_file):
 
 if __name__ == "__main__":
     logs_file = sys.argv[1]
-    main(logs_file)
+    if len(sys.argv) > 2:
+        dag_name_regex = sys.argv[2]
+        main(logs_file, dag_name_regex)
+    else:
+        main(logs_file)
