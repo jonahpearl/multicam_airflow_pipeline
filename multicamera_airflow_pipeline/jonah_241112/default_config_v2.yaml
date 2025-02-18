@@ -190,10 +190,10 @@ o2:
     conda_env: "/home/jop9552/miniconda3/envs/dataPy_torch2/"
 
   prediction_2d:
-    o2_memory: "8G"
+    o2_memory: "6G"
     o2_n_cpus: 4
     o2_queue: "gpu_quad,gpu"
-    o2_runtime_multiplier: 10
+    o2_runtime_multiplier: 12
     # o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197,compute-g-16-254,compute-g-16-255"
     o2_exclude: "compute-g-16-254,compute-g-16-255"
     o2_qos: "gpuquad_qos"
@@ -215,7 +215,7 @@ o2:
     o2_memory: "16G"
     o2_n_cpus: 2
     o2_queue: "gpu_quad,gpu"
-    o2_runtime_multiplier: 2
+    o2_runtime_multiplier: 1
     # o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197,compute-g-16-254,compute-g-16-255"  # tesla V100's on the 16-254/255 nodes aren't working with the jax 0.4 / cuda 12 install
     o2_exclude: "compute-g-16-254,compute-g-16-255"
     o2_qos: "gpuquad_qos"
@@ -223,15 +223,15 @@ o2:
     conda_env: "/home/jop9552/miniconda3/envs/dataPy_KPMS_v2"
   
   triangulation:
-    o2_memory: "16G"
+    o2_memory: "8G"
     o2_n_cpus: 10  # these cores are used efficiently
     o2_queue: "short"
-    o2_runtime_multiplier: 0.75
+    o2_runtime_multiplier: 0.25
     # conda_env: "/n/groups/datta/tim_sainburg/conda_envs/peromoseq"
     conda_env: "/home/jop9552/miniconda3/envs/dataPy_torch2/"
 
   size_normalization:
-      o2_memory: "16G"
+      o2_memory: "6G"
       o2_n_cpus: 3  # using about 50% cpu efficiency
       o2_queue: "short"
       o2_runtime_multiplier: 0.5
@@ -252,14 +252,14 @@ o2:
     conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
 
   continuous_features:
-    o2_memory: "8G"
+    o2_memory: "1G"
     o2_n_cpus: 1
     o2_queue: "short"
     o2_runtime_multiplier: 0.1
     conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
 
   validation_videos:
-    o2_memory: "8G"
+    o2_memory: "2G"
     o2_n_cpus: 1
     o2_queue: "short"
     o2_time_limit: "2:30:00"  # writes ~30 fps, so if we default to 1 min @ 120 fps -> 7200 fr -> 4 min x 6 vids x 2 types of vid = ~ 1 hr, + compressing takes ~1 hr more.
