@@ -34,8 +34,10 @@ class RTMModelConverter:
         rtmdetection_model_name,
         rtmpose_model_name,
         skeleton_py_file="/n/groups/datta/tim_sainburg/projects/multicamera_airflow_pipeline/multicamera_airflow_pipeline/jonah_241112/skeletons/sainburg25pt.py",
-        conda_env="/n/groups/datta/tim_sainburg/conda_envs/mmdeploy",
-        path_to_mmdeploy="/n/groups/datta/tim_sainburg/projects/mmdeploy/",
+        # conda_env="/n/groups/datta/tim_sainburg/conda_envs/mmdeploy",
+        conda_env="/n/groups/datta/Jonah/miniconda3/envs/mmdeploy_JP_v4",
+        # path_to_mmdeploy="/n/groups/datta/tim_sainburg/projects/mmdeploy/",
+        path_to_mmdeploy="/n/groups/datta/Jonah/Local_code_groups/tensorrt_install/mmdeploy",
         path_to_demo_image_detection="/n/groups/datta/tim_sainburg/projects/24-01-05-multicamera_keypoints_mm2d/example_data/test_mouse.png",
         path_to_demo_image_pose="/n/groups/datta/tim_sainburg/projects/24-01-05-multicamera_keypoints_mm2d/example_data/test_mouse_cropped.png",
         path_to_mmdetection_config="/n/groups/datta/tim_sainburg/projects/mmdeploy/configs/mmdet/detection/detection_tensorrt_static-320x320.py",
@@ -124,11 +126,14 @@ class RTMModelConverter:
             model_conversion_script = "source $(conda info --base)/etc/profile.d/conda.sh;\n"
             model_conversion_script += f"conda activate {self.conda_env};\n"
         else:
-            model_conversion_script += "module load gcc/9.2.0\n"
-            model_conversion_script += "module load cuda/11.7\n"
-            model_conversion_script += f"TENSORRT_DIR={self.tensorrt_dir}\n"
-            model_conversion_script += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
+            # model_conversion_script += "module load gcc/9.2.0\n"
+            # model_conversion_script += "module load cuda/11.7\n"
+            # model_conversion_script += f"TENSORRT_DIR={self.tensorrt_dir}\n"
+            # model_conversion_script += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
             # model_conversion_script += f"source activate {self.conda_env};\n"
+            model_conversion_script += "source /n/groups/datta/Jonah/miniconda3/etc/profile.d/conda.sh\n"  # load conda
+            model_conversion_script += f"conda activate {self.conda_env}\n\n"
+            model_conversion_script += f"export TENSORRT_DIR={self.tensorrt_dir}; export LD_LIBRARY_PATH=$TENSORRT_DIR/lib:$LD_LIBRARY_PATH; export CUDNN_DIR={self.tensorrt_dir}/cuda; export LD_LIBRARY_PATH=$CUDNN_DIR/lib64:$LD_LIBRARY_PATH; export ONNXRUNTIME_DIR={self.tensorrt_dir}/onnxruntime-linux-x64-gpu-1.16.3; export LD_LIBRARY_PATH=$ONNXRUNTIME_DIR/lib:$LD_LIBRARY_PATH;"
             model_conversion_script += 'eval "$(conda shell.bash hook)";\n'
             model_conversion_script += f"conda activate {self.conda_env};\n"
         # # Set PYTHONPATH to include the directory where sitecustomize.py is located
@@ -195,10 +200,11 @@ class RTMModelConverter:
             model_conversion_script += "source $(conda info --base)/etc/profile.d/conda.sh;\n"
             model_conversion_script += f"conda activate {self.conda_env};\n"
         else:
-            model_conversion_script += "module load gcc/9.2.0\n"
-            model_conversion_script += "module load cuda/11.7\n"
-            model_conversion_script += f"TENSORRT_DIR={self.tensorrt_dir}\n"
-            model_conversion_script += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
+            # model_conversion_script += "module load gcc/9.2.0\n"
+            # model_conversion_script += "module load cuda/11.7\n"
+            # model_conversion_script += f"TENSORRT_DIR={self.tensorrt_dir}\n"
+            # model_conversion_script += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
+            model_conversion_script += f"export TENSORRT_DIR={self.tensorrt_dir}; export LD_LIBRARY_PATH=$TENSORRT_DIR/lib:$LD_LIBRARY_PATH; export CUDNN_DIR={self.tensorrt_dir}/cuda; export LD_LIBRARY_PATH=$CUDNN_DIR/lib64:$LD_LIBRARY_PATH; export ONNXRUNTIME_DIR={self.tensorrt_dir}/onnxruntime-linux-x64-gpu-1.16.3; export LD_LIBRARY_PATH=$ONNXRUNTIME_DIR/lib:$LD_LIBRARY_PATH;"
             model_conversion_script += 'eval "$(conda shell.bash hook)";\n'
             model_conversion_script += f"conda activate {self.conda_env};\n"
             # model_conversion_script += f"source activate {self.conda_env};\n"

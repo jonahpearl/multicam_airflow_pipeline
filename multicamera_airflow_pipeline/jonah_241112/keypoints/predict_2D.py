@@ -215,10 +215,11 @@ class Inferencer2D:
                     # print(sys.executable)
                     # Run the process and capture the output
                     command = ""
-                    command += "module load gcc/9.2.0\n"
-                    command += "module load cuda/11.7\n"
-                    command += f"TENSORRT_DIR={self.tensorrt_dir}\n"
-                    command += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
+                    # command += "module load gcc/9.2.0\n"
+                    # command += "module load cuda/11.7\n"
+                    # command += f"TENSORRT_DIR={self.tensorrt_dir}\n"
+                    # command += "export LD_LIBRARY_PATH=${TENSORRT_DIR}/lib:$LD_LIBRARY_PATH\n"
+                    command += f"export TENSORRT_DIR={self.tensorrt_dir}; export LD_LIBRARY_PATH=$TENSORRT_DIR/lib:$LD_LIBRARY_PATH; export CUDNN_DIR={self.tensorrt_dir}/cuda; export LD_LIBRARY_PATH=$CUDNN_DIR/lib64:$LD_LIBRARY_PATH; export ONNXRUNTIME_DIR={self.tensorrt_dir}/onnxruntime-linux-x64-gpu-1.16.3; export LD_LIBRARY_PATH=$ONNXRUNTIME_DIR/lib:$LD_LIBRARY_PATH;"
                     # command += 'eval "$(conda shell.bash hook)";\n'
                     # command += f"conda activate {self.conda_env};\n"
                     command += f"{sys.executable} -c '{python_script}'"

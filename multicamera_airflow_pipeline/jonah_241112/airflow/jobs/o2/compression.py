@@ -155,7 +155,7 @@ def compression(
             o2_memory=config["o2"]["compression"]["o2_memory"],
             o2_time_limit=duration_requested,
             o2_queue=config["o2"]["compression"]["o2_queue"],
-            modules_to_load=["gcc/9.2.0"],
+            # modules_to_load=["gcc/9.2.0"],
         )
     
         runner.python_script = textwrap.dedent(

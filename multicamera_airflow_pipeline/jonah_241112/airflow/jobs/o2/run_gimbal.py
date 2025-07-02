@@ -108,7 +108,7 @@ def run_gimbal(
         o2_exclude=config["o2"]["gimbal"]["o2_exclude"],
         o2_qos=config["o2"]["gimbal"]["o2_qos"],
         o2_gres=config["o2"]["gimbal"]["o2_gres"],
-        modules_to_load=["gcc/9.2.0"],  # if env has cuda installed via pip, dont module load cuda.
+        # modules_to_load=["gcc/9.2.0"],  # if env has cuda installed via pip, dont module load cuda.
     )
 
     runner.python_script = textwrap.dedent(

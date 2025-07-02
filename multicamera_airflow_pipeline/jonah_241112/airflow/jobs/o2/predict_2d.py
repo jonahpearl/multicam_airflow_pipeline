@@ -108,7 +108,7 @@ def predict_2d(
         o2_exclude=config["o2"]["prediction_2d"]["o2_exclude"],
         o2_qos=config["o2"]["prediction_2d"]["o2_qos"],
         o2_gres=config["o2"]["prediction_2d"]["o2_gres"],
-        modules_to_load=["gcc/9.2.0", "cuda/11.7"],
+        # modules_to_load=["gcc/9.2.0", "cuda/11.7"],
     )
 
     if config["prediction_2d"]["use_tensorrt"]:

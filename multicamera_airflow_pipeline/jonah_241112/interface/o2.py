@@ -49,7 +49,7 @@ class O2Runner:
         o2_memory="16G",
         o2_time_limit="4:00:00",
         o2_queue="short",
-        modules_to_load=["gcc/9.2.0"],
+        modules_to_load=[],
         o2_exclude=None,  # "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197"
         o2_qos=None,  # "gpuquad_qos"
         o2_gres=None,  # "gpu:1"
@@ -156,7 +156,9 @@ class O2Runner:
         # slurm_script += f"module load gcc/9.2.0\n\n"
         for modules_to_load in self.modules_to_load:
             slurm_script += f"module load {modules_to_load}\n"
-        slurm_script += f"source activate {self.conda_env}\n\n"
+        slurm_script += "source /n/groups/datta/Jonah/miniconda3/etc/profile.d/conda.sh\n"  # load conda
+        slurm_script += f"conda activate {self.conda_env}\n\n"
+        # slurm_script += f"source activate {self.conda_env}\n\n"
         slurm_script += f"python {self.python_script_loc}\n"
 
         # save the script to tmp, then move it to the correct location remotely

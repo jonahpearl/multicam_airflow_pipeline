@@ -145,7 +145,7 @@ tensorrt_conversion:
   rtmdetection_model_name: "rtmdet_small_8xb32-300e_coco_chronic_24-10-31-12-48-26"
   rtmpose_model_name: "rtmpose-m_8xb64-210e_ap10k-256x256_24-11-01-20-36-55"
   skeleton_py_file: "/n/groups/datta/Jonah/Local_code_groups/6cam_repos/multicam_airflow_pipeline/multicamera_airflow_pipeline/jonah_241112/skeletons/weinreb15pt.py"
-  conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+  conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
   path_to_mmdeploy: "/n/groups/datta/Jonah/Local_code_groups/tensorrt_install/mmdeploy"
   path_to_demo_image_detection: "/n/groups/datta/tim_sainburg/projects/24-01-05-multicamera_keypoints_mm2d/example_data/test_mouse.png"
   path_to_demo_image_pose: "/n/groups/datta/tim_sainburg/projects/24-01-05-multicamera_keypoints_mm2d/example_data/test_mouse_cropped.png"
@@ -167,7 +167,7 @@ o2:
     o2_n_cpus: 1
     o2_queue: "short"
     o2_runtime_multiplier: 0.05
-    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
 
   sync_ephys:
     o2_memory: "16G"
@@ -181,7 +181,7 @@ o2:
     o2_n_cpus: 10
     o2_queue: "short"
     o2_time_limit: "2:00:00"
-    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
 
   prediction_2d:
     o2_memory: "16G"
@@ -191,7 +191,7 @@ o2:
     o2_exclude: "compute-g-16-175,compute-g-16-176,compute-g-16-177,compute-g-16-194,compute-g-16-197,compute-g-16-254,compute-g-16-255"
     o2_qos: "gpuquad_qos"
     o2_gres: "gpu:1"
-    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
 
   spikesorting:
     o2_memory: "64G"
@@ -226,32 +226,32 @@ o2:
       o2_n_cpus: 3  # using about 50% cpu efficiency
       o2_queue: "short"
       o2_runtime_multiplier: 0.5
-      conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+      conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
 
   arena_alignment:
       o2_memory: "8G"
       o2_n_cpus: 1
       o2_queue: "short"
       o2_runtime_multiplier: 0.1
-      conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+      conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
 
   egocentric_alignment:
     o2_memory: "8G"
     o2_n_cpus: 1
     o2_queue: "short"
     o2_runtime_multiplier: 0.2
-    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
 
   continuous_features:
     o2_memory: "8G"
     o2_n_cpus: 1
     o2_queue: "short"
     o2_runtime_multiplier: 0.1
-    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
 
   validation_videos:
     o2_memory: "8G"
     o2_n_cpus: 1
     o2_queue: "short"
     o2_time_limit: "2:30:00"  # writes ~30 fps, so if we default to 1 min @ 120 fps -> 7200 fr -> 4 min x 6 vids x 2 types of vid = ~ 1 hr, + compressing takes ~1 hr more.
-    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v2"
+    conda_env: "/home/jop9552/miniconda3/envs/mmdeploy_JP_v4"
