@@ -16,6 +16,8 @@ The first version of the pipeline is stored in multicamera_airflow_pipeline.tim_
 
 Because these steps are computed in a somewhat a complex dependency graph, we use Apache Airflow to manage the pipeline. In addition, these tasks are too computationally expensive to run on a single computer, so we have methods to run tasks on both the HMS data cluster [O2](https://harvardmed.atlassian.net/wiki/spaces/O2/overview) and locally. O2 is a slurm cluster; in principal this code should work equally well on other slurm clusters. For example, we could use the [HMS Longwood cluster](https://harvardmed.atlassian.net/wiki/spaces/Longwood). 
 
+There is an in-depth readme here: https://docs.google.com/document/d/1fIDGpZRpXkEqrVmZZycYpo-yy-baXff6SWuWPmXZnZU/
+
 # Installation
 
 I reccomend creating a separate conda environment for different steps of the pipeline. E.g. a `pipeline` environment for general tasks, a `jax` environment for Gimbal & KPMS, an `mmdeploy` environment for 2D keypoint inference, a `spikesorting` environment for kilosort/spikesorting, and an `airflow` environment for running airflow. 
