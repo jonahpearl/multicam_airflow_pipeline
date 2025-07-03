@@ -492,7 +492,8 @@ def compress_vid_via_ffmpeg(input_vid, output_vid, crf=23, preset="fast", recomp
 
     # Run the ffmpeg command for video compression
     command = [
-        "/n/app/ffmpeg/3.3.3/ffmpeg",
+        # "/n/app/ffmpeg/3.3.3/ffmpeg",
+        "ffmpeg",
         "-y",
         "-i",
         str(input_vid),

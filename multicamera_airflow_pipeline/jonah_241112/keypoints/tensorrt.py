@@ -133,7 +133,7 @@ class RTMModelConverter:
             # model_conversion_script += f"source activate {self.conda_env};\n"
             model_conversion_script += "source /n/groups/datta/Jonah/miniconda3/etc/profile.d/conda.sh\n"  # load conda
             model_conversion_script += f"conda activate {self.conda_env}\n\n"
-            model_conversion_script += f"export TENSORRT_DIR={self.tensorrt_dir}; export LD_LIBRARY_PATH=$TENSORRT_DIR/lib:$LD_LIBRARY_PATH; export CUDNN_DIR={self.tensorrt_dir}/cuda; export LD_LIBRARY_PATH=$CUDNN_DIR/lib64:$LD_LIBRARY_PATH; export ONNXRUNTIME_DIR={self.tensorrt_dir}/onnxruntime-linux-x64-gpu-1.16.3; export LD_LIBRARY_PATH=$ONNXRUNTIME_DIR/lib:$LD_LIBRARY_PATH;"
+            model_conversion_script += f"export TENSORRT_DIR={self.tensorrt_dir}; export LD_LIBRARY_PATH=$TENSORRT_DIR/lib:$LD_LIBRARY_PATH; export CUDNN_DIR={self.tensorrt_dir}/cuda; export LD_LIBRARY_PATH=$CUDNN_DIR/lib64:$LD_LIBRARY_PATH; export ONNXRUNTIME_DIR={self.tensorrt_dir}/onnxruntime-linux-x64-gpu-1.16.3; export LD_LIBRARY_PATH=$ONNXRUNTIME_DIR/lib:$LD_LIBRARY_PATH; export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
             model_conversion_script += 'eval "$(conda shell.bash hook)";\n'
             model_conversion_script += f"conda activate {self.conda_env};\n"
         # # Set PYTHONPATH to include the directory where sitecustomize.py is located
