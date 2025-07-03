@@ -7,6 +7,7 @@ from airflow.models import DagRun, TaskInstance
 from airflow.utils.db import create_session
 from airflow.utils.state import State
 from sqlalchemy import and_, func
+from tqdm.auto import tqdm
 import yaml
 
 
@@ -14,7 +15,7 @@ def get_latest_successful_dag_runs():
     with create_session() as session:
         subquery = (
             session.query(
-                DagRun.dag_id, func.max(DagRun.execution_date).label("max_date")
+                DagRun.dag_id, func.max(DagRun.execution_date).label("max_date")  # Get the latest execution date for each DAG
             )
             .filter(DagRun.state == State.SUCCESS)
             .group_by(DagRun.dag_id)
@@ -124,10 +125,14 @@ def get_task_logs(task_instance):
 
 
 def export_logs_to_yaml():
+
+    # Get the latest successful DAG runs
+    print("Fetching latest successful DAG runs...")
     dag_runs = get_latest_successful_dag_runs()
     all_logs = {}
 
-    for dag_run in dag_runs:
+    print("Exporting logs for each DAG run...")
+    for dag_run in tqdm(dag_runs):
         dag_logs = {}
         task_instances = get_task_instances(dag_run)
 
@@ -137,6 +142,7 @@ def export_logs_to_yaml():
 
         all_logs[dag_run.dag_id] = dag_logs
 
+    print("Exporting logs...")
     with open("exported_airflow_logs.yml", "w") as yaml_file:
         yaml.dump(all_logs, yaml_file, default_flow_style=False)
 

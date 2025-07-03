@@ -1,14 +1,29 @@
 import re
 import sys
 
+import click
 import numpy as np
 from o2_utils.slurm import evaluate_resource_usage
 from tqdm.auto import tqdm
 import yaml
 
 
-def main(airflow_logs_file, dag_name_regex=None):
-    """ Analyze the jobs in the airflow logs file.
+@click.command()
+@click.argument("airflow_logs_file", type=click.Path(exists=True))
+@click.option(
+    "--dag-name-regex",
+    default=None,
+    type=str,
+    help="Regex to filter DAG names",
+)
+@click.option(
+    "--min-job-time",
+    default=0,
+    type=float,
+    help="Minimum job time in seconds to consider for analysis",
+)
+def main(airflow_logs_file, dag_name_regex=None, min_job_time=0):
+    """Analyze the jobs in the airflow logs file.
 
     Args
     ----
@@ -30,7 +45,7 @@ def main(airflow_logs_file, dag_name_regex=None):
         logs = yaml.safe_load(f)
 
     tasks_to_analyze = [
-       "compression",
+        "compression",
         "predict_2d",
         "triangulation",
         "run_gimbal",
@@ -38,7 +53,7 @@ def main(airflow_logs_file, dag_name_regex=None):
         "arena_alignment",
         "egocentric_alignment",
         "compute_continuous_features",
-       "validation_videos",
+        "validation_videos",
     ]
 
     # Sub-select DAGs of interest
@@ -50,9 +65,11 @@ def main(airflow_logs_file, dag_name_regex=None):
         }
         print(f"Sub-selected {len(logs)} DAGs: {list(logs.keys())}")
 
-
     # See how long each task took relative to the time requested
     for task in tqdm(tasks_to_analyze, desc="Airflow steps"):
+
+        # if task != "arena_alignment": continue
+
         time_fractions = []
         mem_fractions = []
         jobids = []
@@ -64,19 +81,29 @@ def main(airflow_logs_file, dag_name_regex=None):
                 or run_info[task]["job_id"] == "Not found"
             ):
                 continue
-            
+
             # Get the job info
             jobid = run_info[task]["job_id"]
-            jobinfo = evaluate_resource_usage(jobid, plot=False)  # calls squeue in bkgnd
+            jobinfo = evaluate_resource_usage(
+                jobid, plot=False
+            )  # calls squeue in bkgnd
 
             # If job isn't finished w status COMPLETED, will not be returned in the dict, so skip that
             if jobid not in jobinfo:
+                continue
+            
+            # If job took less than the minimum time, skip it
+            if jobinfo[jobid]["run_time"] < min_job_time:
                 continue
 
             # Save the info
             time_fractions.append(jobinfo[jobid]["time_fraction"])
             mem_fractions.append(jobinfo[jobid]["mem_fraction"])
             jobids.append(jobid)
+
+        if len(time_fractions) == 0:
+            print(f"No jobs found for task {task} with the given criteria.")
+            continue
 
         # Report the results
         print(f"Task: {task}")
@@ -96,9 +123,4 @@ def main(airflow_logs_file, dag_name_regex=None):
 
 
 if __name__ == "__main__":
-    logs_file = sys.argv[1]
-    if len(sys.argv) > 2:
-        dag_name_regex = sys.argv[2]
-        main(logs_file, dag_name_regex)
-    else:
-        main(logs_file)
+    main()
