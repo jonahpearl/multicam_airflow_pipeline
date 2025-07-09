@@ -186,7 +186,7 @@ o2:
     o2_memory: "2G"
     o2_n_cpus: 6
     o2_queue: "short"
-    o2_runtime_multiplier: 5
+    o2_runtime_multiplier: 6
     conda_env: "/n/groups/datta/Jonah/miniconda3/envs/dataPy_NWB2/"
 
   prediction_2d:
