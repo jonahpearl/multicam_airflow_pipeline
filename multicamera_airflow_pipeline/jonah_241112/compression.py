@@ -180,7 +180,7 @@ class VideoCompressor:
             fmt_filter = ""
         
         # Prep the ffmpeg command
-        ffmpeg_command = f"module load ffmpeg; ffmpeg -y -r {fps} -i {self.video.as_posix()} {fmt_filter} -c:v libx264 -preset {self.preset} -crf {self.crf} -threads {self.nthreads} {output_vid}"
+        ffmpeg_command = f"ffmpeg -y -r {fps} -i {self.video.as_posix()} {fmt_filter} -c:v libx264 -preset {self.preset} -crf {self.crf} -threads {self.nthreads} {output_vid}"
         ffmpeg_command += " 2>&1"  # Capture stderr
         logger.info(f"Running ffmpeg command: {ffmpeg_command}")
 
