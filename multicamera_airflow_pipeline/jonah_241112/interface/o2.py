@@ -113,9 +113,14 @@ class O2Runner:
     def run(self):
 
         # check in case a job is already running with this name
-        # running_jobs_info = self.get_running_jobs_info_from_o2()
-        # for job in running_jobs_info:
-        #     if job["NAME"] == self.job_name:
+        running_jobs_info = self.get_running_jobs_info_from_o2()
+        logger.info(f"Checking for prefix {self.job_name_prefix} in {len(running_jobs_info)} running jobs...")
+        for jobid, job_dict in running_jobs_info.items():
+            logger.info(f"Existing job id {jobid}, name {job_dict['NAME']}")
+            if self.job_name_prefix in job_dict["NAME"]:
+                logger.info(f"Found running job with prefix {self.job_name_prefix}, id {jobid}, fullname {job_dict["NAME"]}, not submitting another.")
+                self.slurm_job_id = jobid
+                return
 
 
         # create the remote job directory
