@@ -114,7 +114,7 @@ gimbal:
     # step_size: 0.025 
     conf_sigmoid_gain: 20
     conf_sigmoid_center: 0.1
-    batch_size: 216000  # 30 min at 120 fps
+    batch_size: 180000  # For CW skeleton, 30 min at 120 fps = 216k frames fits in 32GB RAM GPU, but 40 min at 120 fps (288k) doesn't, so 180k will make 40 min be split in two parts, but keep 30 min in one part.
     distance_from_median_thresh: 50
 
 prediction_2d:
