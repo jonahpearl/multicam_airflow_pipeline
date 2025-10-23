@@ -72,6 +72,7 @@ class O2Runner:
         self.do_not_submit = do_not_submit  # don't actually submit
         self.slurm_job_id = None
         self.ssh_landing_hostname = None
+        self.ssh_landing_hostname_num = 0
 
         # determine a job id as the current timestamp
         self.job_datetime = datetime.now()
@@ -141,7 +142,10 @@ class O2Runner:
         else:
             self.submit()
 
-        self.close_ssh_connection()
+        # No need to replace the connection
+        # self.close_ssh_connection()
+
+        return
 
     def write_slurm_script(self):
         slurm_script = "#!/usr/bin/env bash\n"
@@ -265,29 +269,109 @@ class O2Runner:
         running_jobs = parse_squeue_output(slurm_output)
         return running_jobs
 
+    def submit_new_ssh_landing_job(self):
+        """Submit a new airflow_ssh_landing job, if the old one is giving the pam "no active jobs on this node" message
+
+        Returns
+        -------
+        job_started: whether or not the new ssh landing job has started
+        """
+        logger.info(f"Attempting to submit new ssh landing job #{self.ssh_landing_hostname_num}")
+        login_ssh = paramiko.SSHClient()  # Connect to the login node
+        login_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        login_ssh.connect(self.o2_login_server, username=self.o2_username)
+        job_name = f'"airflow_ssh_landing_{self.ssh_landing_hostname_num}"'
+        cmd = f"sbatch -p short -J {job_name} -t 12:00:00 --mem 2G -c 1 /home/jop9552/idle_and_resubmit_long.sh {self.ssh_landing_hostname_num}"
+        stdin, stdout, stderr = login_ssh.exec_command(cmd)
+        stdout = stdout.read().decode()
+        stderr = stderr.read().decode()
+        jobid = stdout.split(" ")[-1].strip("\n")
+        logger.info(f"Decoded stdout: {stdout}")
+        logger.info(f"Decoded stderr: {stderr}")
+        job_started = self.wait_for_job_to_start(jobid, login_ssh)
+        return job_started
+
+    def wait_for_job_to_start(self, jobid, ssh_connection, n_total_attempts=5, time_sleep=300):
+        job_started = False
+        n_attempts = 0
+        logger.info(f"Waiting for job {jobid} to start...")
+        check_command = f"squeue --user $USER -j {jobid} --Format=STATE"
+        check_command.replace("\n", "")  # sometimes jobid seems to contain a newline? and that messes up the squeue cmd
+        logger.info(f"Checking with command: {check_command}")
+        while (not job_started) and (n_attempts < n_total_attempts):
+            n_attempts += 1
+            _, stdout, stderr = ssh_connection.exec_command(check_command)
+            stdout = stdout.read().decode()  # will be sth like "STATE      \nPENDING       \n"
+            stderr = stderr.read().decode()
+            logger.info(f"Decoded stdout: {stdout}")
+            logger.info(f"Decoded stderr: {stderr}")
+            job_state = stdout.split("\n")[1].strip()
+            if job_state != "PENDING":
+                job_started = True
+                logger.info("Job started.")
+            else:
+                logger.info(f"Job not started, waiting {time_sleep} sec before checking again...")
+                time.sleep(time_sleep)
+
+        if not job_started:
+            logger.info(f"Job not started after {n_attempts} attempts, moving on for now...")
+
+        return job_started
+
+    def get_ssh_landing_jobs(self):
+        running_jobs = self.get_running_jobs_info_from_o2()
+        ssh_landing_jobs = [job for job in running_jobs.values() if ('airflow_ssh_landing' in job['NAME']) and job['ST']=="R"]  # state == running
+
+        # Sort by suffix (0,1,2,3...)
+        indices = np.array([job["NAME"].split("_")[-1] for job in ssh_landing_jobs])
+        sorting = np.argsort(indices)
+        ssh_landing_jobs_sorted = [ssh_landing_jobs[i] for i in sorting]
+        sorted_names = [job["NAME"] for job in ssh_landing_jobs_sorted]
+        logger.info(f"Found ssh landing jobs: {sorted_names}")
+        return ssh_landing_jobs_sorted
+
     def find_ssh_landing_hostname(self):
         """ Find the hostname of the node where the airflow_ssh_landing job is running.
             If there is none, use the login node at your own risk.
         """
-        running_jobs = self.get_running_jobs_info_from_o2()
-        airflow_job = [job for job in running_jobs.values() if job['NAME'] == 'airflow_ssh_landing' and job['ST']=="R"]  # state == running
-        if len(airflow_job) == 0:
-            logging.warn("No airflow_ssh_landing job found, please start one: 'sbatch -p long -t 10-0 --mem 4GB -c 1 -J \"airflow_ssh_landing\" /home/jop9552/idle_forever.sh'")
-            logging.warn("Using login node for now, but this is not good practice and may fail for many simultaneously running jobs.")
-            self.ssh_landing_hostname = self.o2_login_server
-        elif len(airflow_job) >= 1:
-            airflow_job = airflow_job[0]
-            self.ssh_landing_hostname = airflow_job['NODELIST(REASON)'] + ".o2.rc.hms.harvard.edu"
-            logger.info("Found SSH landing job with hostname: " + self.ssh_landing_hostname)
-        
+        ssh_landing_jobs = self.get_ssh_landing_jobs()  # sorted by suffix
+
+        # If no ssh landing jobs, or we're here because all the landing jobs are pam'd out, try to start a new one.
+        if (len(ssh_landing_jobs) == 0) or (self.ssh_landing_hostname_num >= len(ssh_landing_jobs)):
+
+            # Try to start a new landing job
+            job_started = self.submit_new_ssh_landing_job()
+            
+            # If we fail to start one, just use the login node, but warn the user
+            if not job_started:
+                logging.warn("No airflow_ssh_landing job found, and was unable to start one.")
+                logging.warn("Using login node for now, but this is not good practice and may fail for many simultaneously running jobs.")
+                self.ssh_landing_hostname = self.o2_login_server
+                return
+            else:
+                # If we've started one, get its info
+                ssh_landing_jobs = self.get_ssh_landing_jobs()
+
+        # Get info for the landing job that we want
+        airflow_job = ssh_landing_jobs[self.ssh_landing_hostname_num]
+        self.ssh_landing_hostname = airflow_job['NODELIST(REASON)'] + ".o2.rc.hms.harvard.edu"
+        logger.info("Found SSH landing job with hostname: " + self.ssh_landing_hostname)
+        return
+
 
     def establish_ssh_connection(self, n_attempts=5, attempt_delay=60):
         """Establish a sustained connection to the discovered SSH landing node using paramiko.
         """
+
+        # Try to find an ssh landing job
         if self.ssh_landing_hostname is None:
             self.find_ssh_landing_hostname()
+
+        # Set up the ssh client
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        # Try to connect
         connected = False
         ii = 0
         while not connected and ii < n_attempts:
@@ -299,6 +383,13 @@ class O2Runner:
             except Exception as e:
                 logger.error(f"Error connecting to O2: {str(e)}")
                 ii += 1
+
+                # Catch the issue where pam module denies connection, seemingly due to too many connections to one job (~30 or so).
+                # If this happens, we try to submit a new landing job.
+                # The code there will wait about ~30 min for the new landing job to start, after which we just use the login node.
+                if "EOF" in str(e):
+                    self.ssh_landing_hostname_num += 1
+                    self.find_ssh_landing_hostname()
                 logger.info(f"Retrying connection in {attempt_delay} seconds")
                 time.sleep(attempt_delay)
         if not connected:
@@ -360,11 +451,35 @@ class O2Runner:
             raise ValueError("slurm_job_id is not set")
 
         logger.info(f"Checking job status: {self.slurm_job_id}")
-        # check_command = f"sacct -j {self.slurm_job_id} --format=State --noheader"
-        check_command = f"sacct -j {self.slurm_job_id} --format=JobID,State | grep -E '^[0-9]+ ' | awk '{{print $2}}'"
-        stdin, stdout, stderr = self.ssh.exec_command(check_command)
-        slurm_output = stdout.read().decode()[:-1]
-        job_state = slurm_output
+
+        # First check with squeue, for when job is pending / running (before job starts, can't use sacct)
+        check_command = f"squeue --user $USER -j {self.slurm_job_id} --Format=STATE"
+        check_with_sacct = False
+        logger.info(f"Checking with command: {check_command}")
+        _, stdout, stderr = self.ssh.exec_command(check_command)
+        stdout = stdout.read().decode()  # will be sth like "STATE      \nPENDING       \n"
+        stderr = stderr.read().decode()
+        logger.info(f"Decoded stdout: {stdout}")
+        logger.info(f"Decoded stderr: {stderr}")
+        job_state = None
+        if "error" in stderr or not (len(stdout.split("\n"))==3):
+            logger.info("Retrying check with sacct...")
+            check_with_sacct = True  # if job has finished, then squeue will error, and it's safe to use sacct
+        else:
+            job_state = stdout.split("\n")[1].strip()
+     
+        if check_with_sacct:
+            check_command = f"sacct -j {self.slurm_job_id} --format=JobID,State | grep -E '^[0-9]+ ' | awk '{{print $2}}'"
+            logger.info(f"Checking with command: {check_command}")
+            _, stdout, stderr = self.ssh.exec_command(check_command)
+            stdout = stdout.read().decode()
+            stderr = stderr.read().decode()
+            slurm_output = stdout[:-1]
+            job_state = slurm_output
+
+        logger.info(f"Decoded stdout: {stdout}")
+        logger.info(f"Decoded stderr: {stderr}")
+        logger.info(f"Decoded job state: {job_state}")
 
         # Add custom handling based on the job state
         ret = False
