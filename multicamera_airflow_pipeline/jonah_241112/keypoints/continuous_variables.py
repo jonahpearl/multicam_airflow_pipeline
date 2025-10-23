@@ -245,6 +245,8 @@ def compute_continuous_features(
         angular_acceleration, size=angular_acceleration_kernel_size_frames
     )
 
+    ### same thing but for just the head wrt the spine
+
     ### curvature of spine
     spine_keypoints = [
         "nose_tip",
