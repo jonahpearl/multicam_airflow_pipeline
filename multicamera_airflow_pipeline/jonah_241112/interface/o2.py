@@ -189,8 +189,8 @@ class O2Runner:
         try:
             logger.info(f"Creating remote directory: {remote_path.as_posix()}")
 
-            # Execute the mkdir command to create the folder on the remote server
-            stdin, stdout, stderr = self.ssh.exec_command(f"mkdir -p {remote_path.as_posix()}")
+            # Execute the mkdir command to create the folder on the remote server, and make it read/writable for the dattalab group
+            stdin, stdout, stderr = self.ssh.exec_command(f"mkdir -p {remote_path.as_posix()} && chmod 2775 {remote_path.as_posix()}")
 
             # Check if there was any error
             error_message = stderr.read().decode().strip()
