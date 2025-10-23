@@ -74,7 +74,7 @@ class GimbalInferencer:
         step_size=0.1,
         conf_sigmoid_gain=20,
         conf_sigmoid_center=0.1,
-        batch_size=200000,
+        batch_size=180000,  # n frames. For CW skeleton, 30 min at 120 fps = 216k frames fits in 32GB RAM GPU, but 40 min at 120 fps doesn't, so 180k will make 40 min be split in two parts.
         distance_from_median_thresh=50,
         kpt_dict=default_kpt_dict,
         recompute_completed=False,
