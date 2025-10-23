@@ -231,10 +231,10 @@ o2:
     conda_env: "/n/groups/datta/Jonah/miniconda3/envs/dataPy_NWB2/"
 
   size_normalization:
-      o2_memory: "6G"
+      o2_memory: "10G"
       o2_n_cpus: 3  # using about 50% cpu efficiency
       o2_queue: "short"
-      o2_runtime_multiplier: 0.4
+      o2_runtime_multiplier: 0.5
       conda_env: "/n/groups/datta/Jonah/miniconda3/envs/mmdeploy_JP_v4"
 
   arena_alignment:
@@ -259,7 +259,7 @@ o2:
     conda_env: "/n/groups/datta/Jonah/miniconda3/envs/mmdeploy_JP_v4"
 
   validation_videos:
-    o2_memory: "2G"
+    o2_memory: "4G"
     o2_n_cpus: 1
     o2_queue: "short"
     o2_time_limit: "2:30:00"  # writes ~30 fps, so if we default to 1 min @ 120 fps -> 7200 fr -> 4 min x 6 vids x 2 types of vid = ~ 1 hr, + compressing takes ~1 hr more.
