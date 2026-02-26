@@ -27,13 +27,13 @@ from sklearn.linear_model import LinearRegression
 
 # load skeleton
 from multicamera_airflow_pipeline.jonah_241112.skeletons.defaults import (
-    dataset_info,
-    parents_dict,
-    keypoint_info,
-    keypoints,
-    keypoints_order,
     kpt_dict,
+    gimbal_skeleton,
+    skeleton_info,
 )
+bodyparts = list(kpt_dict.keys())
+bodyparts = [str(b) for b in bodyparts]  # cast from np.string to python str
+gimbal_bodyparts = [bp for bp in bodyparts if any([bp in joint for joint in gimbal_skeleton])]  # For JP pipeline, we exclude tail_tip from gimbal, so need to filter keypoints differently post gimbal
 
 
 class ArenaAligner:
@@ -70,27 +70,23 @@ class ArenaAligner:
 
         # Create a temporary directory
         with tempfile.TemporaryDirectory() as tmpdirname:
+
+
+            ### 0 -- SETUP ###
             # Convert the temporary directory path to a Path object
             tmpdir_path = Path(tmpdirname)
             logger.info(f"Temporary directory created: {tmpdir_path}")
+
             # initialize output mmaps
             temp_coordinates_file, temp_centroids_file = self.initialize_output(tmpdir_path)
 
             # grab a subset of the coordinates that will fit into memory
             coordinates = sample_evenly(self.predictions_3D_mmap, max_samples=100000)
 
+            # Remove any nans
             if np.any(np.isnan(coordinates)):
                 logger.info(f"\t prop nans: {np.mean(np.isnan(coordinates))}")
                 coordinates = generate_initial_positions(coordinates)
-
-            # depth should initially be up is positive
-            original_depth_sample = np.median(coordinates[::100, :, 2], axis=1)
-
-            # subtract out the floor
-            minimum_body_position = np.min(coordinates[:, :, 2], axis=1)
-            median_coordinates = np.median(coordinates[:, :, 2])
-            coordinates[:, :, 2] -= median_coordinates
-            minimum_body_position = np.min(coordinates[:, :, 2], axis=1)
 
             # fill in coordinates_output with predictions_3D_mmap in batches of 100k samples
             for batch in range(self.n_batches):
@@ -100,8 +96,35 @@ class ArenaAligner:
                 if np.any(np.isnan(batch)):
                     logger.info(f"\t prop nans batch: {np.mean(np.isnan(batch))}")
                     batch = generate_initial_positions(batch)
-                batch[:, :, 2] -= median_coordinates
                 self.coordinates_output[batch_start:batch_end] = batch
+
+            ### 1 -- CHECK Z DIRECTION ###
+            # depth should initially be up is positive
+            # check whether z axis is flipped (in the original data, the floor is the furthest object in the z plane).
+            # correcting floor / ceiling direction
+
+            # NEW WAY -- check if average paw keypoitns are below average head keypoints
+            hind_paw_indices = [gimbal_bodyparts.index(bp) for bp in gimbal_bodyparts if "hind_paw" in bp]
+            head_indices = [gimbal_bodyparts.index(bp) for bp in gimbal_bodyparts if bp in ["nose_tip", "forehead", "left_ear", "right_ear"]]
+            hind_paw_avg_z = np.mean(coordinates[:, hind_paw_indices, 2])
+            head_avg_z = np.mean(coordinates[:, head_indices, 2])
+            print(f"Average hind paw z: {hind_paw_avg_z}, average head z: {head_avg_z}")
+            z_axis_is_flipped = hind_paw_avg_z > head_avg_z
+            if z_axis_is_flipped:
+                print("Flipping z-axis..")
+                coordinates[:, :, 2] *= -1
+                self.coordinates_output[:, :, 2] *= -1
+            else:
+                print("Not flipping z-axis..")
+
+            ### 2 -- ALIGNMENT ###
+            # subtract out the floor
+            minimum_body_position = np.min(coordinates[:, :, 2], axis=1)
+            median_coordinates = np.median(coordinates[:, :, 2])
+            coordinates[:, :, 2] -= median_coordinates
+            self.coordinates_output -= median_coordinates
+            minimum_body_position = np.min(coordinates[:, :, 2], axis=1)
+            
 
             # compute the current centroids
             centroids = np.median(coordinates, axis=1)
@@ -310,35 +333,65 @@ class ArenaAligner:
 
             ## fix remaining misalignment by rotating to keep the floor aligned to the feet
             # threshold out from regression any jumping or outliers
+            
+            
             # fit model
+            # model = LinearRegression()
+            # model.fit(centroids[outlier_mask, :2], minimum_body_position[outlier_mask])
+            # # Assuming centroids is your array of points and model is your trained LinearRegression model
+            # a, b = model.coef_  # Coefficients from the linear regression
+            # # Normal vector of the plane
+            # normal_vector = np.array([a, b, -1])
+            # # Angle between the normal vector and the z-axis
+            # cos_theta = -1 / np.sqrt(a**2 + b**2 + 1)
+            # sin_theta = np.sqrt(1 - cos_theta**2)
+            # theta = np.arctan2(sin_theta, cos_theta)
+            # print(f"Regression coefficients: a={a}, b={b}, theta={np.rad2deg(theta)} degrees")
+            # # Rotation axis (cross product of normal_vector and z-axis (0, 0, 1))
+            # rotation_axis = np.cross(normal_vector, np.array([0, 0, 1]))
+            # rotation_axis = rotation_axis / np.linalg.norm(rotation_axis)  # Normalize the axis
+            # # Construct the rotation matrix
+            # rot = R.from_rotvec(rotation_axis * theta)
+            # rotation_matrix = rot.as_matrix()
+            # # Apply the rotation to the centroids
+            # rotated = np.dot(
+            #     rotation_matrix,
+            #     np.reshape(
+            #         coordinates,
+            #         (np.product(np.shape(coordinates)[:2]), 3),
+            #     ).T,
+            # ).T
+            # coordinates = rotated.reshape(coordinates.shape)
+            # coordinates = coordinates.astype(np.float32)
+
+            # Fit plane: z = a x + b y + c
             model = LinearRegression()
             model.fit(centroids[outlier_mask, :2], minimum_body_position[outlier_mask])
-            # Assuming centroids is your array of points and model is your trained LinearRegression model
-            a, b = model.coef_  # Coefficients from the linear regression
-            # Normal vector of the plane
-            normal_vector = np.array([a, b, -1])
-            # Angle between the normal vector and the z-axis
-            cos_theta = -1 / np.sqrt(a**2 + b**2 + 1)
-            sin_theta = np.sqrt(1 - cos_theta**2)
-            theta = np.arctan2(sin_theta, cos_theta)
-            # Rotation axis (cross product of normal_vector and z-axis (0, 0, 1))
-            rotation_axis = np.cross(normal_vector, np.array([0, 0, 1]))
-            rotation_axis = rotation_axis / np.linalg.norm(rotation_axis)  # Normalize the axis
-            # Construct the rotation matrix
+            a, b = model.coef_
+            # Normal vector of the plane (choose orientation with positive z)
+            normal_vector = np.array([a, b, -1.0])
+            if normal_vector[2] < 0:
+                normal_vector = -normal_vector
+            # Angle between normal vector and +z-axis
+            z_axis = np.array([0.0, 0.0, 1.0])
+            dot = np.dot(normal_vector, z_axis)
+            cos_theta = dot / np.linalg.norm(normal_vector)
+            cos_theta = np.clip(cos_theta, -1.0, 1.0)
+            theta = np.arccos(cos_theta)
+            print(f"Regression coefficients: a={a}, b={b}, angle to z-axis (degrees): {np.rad2deg(theta)}")
+            # Rotation axis: normal x z
+            rotation_axis = np.cross(normal_vector, z_axis)
+            rotation_axis /= np.linalg.norm(rotation_axis)
+            # Rotation
             rot = R.from_rotvec(rotation_axis * theta)
             rotation_matrix = rot.as_matrix()
-            # Apply the rotation to the centroids
-            rotated = np.dot(
-                rotation_matrix,
-                np.reshape(
-                    coordinates,
-                    (np.product(np.shape(coordinates)[:2]), 3),
-                ).T,
-            ).T
-            coordinates = rotated.reshape(coordinates.shape)
-            coordinates = coordinates.astype(np.float32)
+            # Apply to coordinates
+            rotated = (rotation_matrix @ coordinates.reshape(-1, 3).T).T
+            coordinates = rotated.reshape(coordinates.shape).astype(np.float32)
 
-            # TODO: rotate points in centroids_output memmap in batches of 100k samples
+
+
+            # rotate points in centroids_output memmap in batches of 100k samples
             #   the fit linear regression
             for batch in range(self.n_batches):
                 batch_start = batch * self.batch_size
@@ -355,28 +408,10 @@ class ArenaAligner:
                 batch = batch.astype(np.float32)
                 self.coordinates_output[batch_start:batch_end] = batch
 
-            # check whether z axis is flipped (in the original data, the floor is the furthest object in the z plane)
-            depth_sample = np.median(coordinates[::100, :, 2], axis=1)
-            z_axis_correlation = scipy.stats.pearsonr(
-                depth_sample, original_depth_sample
-            ).statistic
-            z_axis_is_flipped = np.sign(z_axis_correlation) == -1
-            if z_axis_is_flipped:
-                coordinates[:, :, 2] *= -1
-
-                # rotate points in coordinates_output memmap in batches of 100k samples
-                #   following the fit rectangle
-                for batch in range(self.n_batches):
-                    batch_start = batch * self.batch_size
-                    batch_end = (batch + 1) * self.batch_size
-                    batch = np.array(self.coordinates_output[batch_start:batch_end])
-                    batch[:, :, 2] *= -1
-                    self.coordinates_output[batch_start:batch_end] = batch
-
             # compute the current centroids
             centroids = np.median(coordinates, axis=1)
 
-            # TODO: add centroids to coordinates_output memmap in batches of 100k samples
+            # add centroids to coordinates_output memmap in batches of 100k samples
             for batch in range(self.n_batches):
                 batch_start = batch * self.batch_size
                 batch_end = batch + 1 * self.batch_size
@@ -436,8 +471,8 @@ class ArenaAligner:
 
             if self.plot_steps:
 
-                fig, axs = plt.subplots(ncols=3, figsize=(8, 2))
-                axs[0].scatter(
+                fig, axs = plt.subplots(ncols=4, figsize=(12, 2))
+                sc0 = axs[0].scatter(
                     centroids[::10, 0],
                     centroids[::10, 1],
                     c=minimum_body_position[::10],
@@ -445,11 +480,27 @@ class ArenaAligner:
                     vmin=-10,
                     vmax=10,
                 )
-                axs[1].scatter(centroids[::10, 0], centroids[::10, 2], c=centroids[::10, 1], s=1)
-                axs[1].set_ylim([-100, 100])
+                cbar0 = fig.colorbar(sc0, ax=axs[0])
+                cbar0.set_label("Minimum body position (mm)")
+                axs[0].set_xlabel("Centroid x (mm)")
+                axs[0].set_ylabel("Centroid y (mm)")
+
+                sc1 = axs[1].scatter(centroids[::10, 0], centroids[::10, 2], c=centroids[::10, 1], s=1)
+                fig.colorbar(sc1, ax=axs[1]).set_label("Centroid y (mm)")
+                axs[1].set_xlabel("Centroid x (mm)")
+                axs[1].set_ylabel("Centroid z (mm)")
+                axs[1].set_ylim([-50, 100])
+                axs[1].axhline(0, color="black", linestyle="--", lw=0.5)
+
                 axs[2].hist(minimum_body_position.flatten(), bins=np.linspace(-20, 20, 40))
-                # save to spikesorting_output_directory
-                plt.savefig(self.arena_alignment_output_directory / "4-final_alignment.png")
+                axs[2].set_xlabel("Minimum body position (mm)")
+
+                axs[3].plot(minimum_body_position.flatten())
+                axs[3].set_xlabel("Frames (downsampled)")
+                axs[3].set_ylabel("Min. body pos. (mm)")
+
+                fig.tight_layout()
+                plt.savefig(self.arena_alignment_output_directory / "5-final_alignment.png")
 
                 plt.close()
 
