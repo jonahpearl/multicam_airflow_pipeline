@@ -86,7 +86,8 @@ class O2Runner:
         self.output_log = self.remote_job_directory / f"{self.job_name}_jobid_%j.log"
         self.ssh = None
 
-        self.establish_ssh_connection()
+        # self.establish_ssh_connection()
+        self.ensure_ssh_connection()
 
     def report_output_log(self):
         # read the output log and write it to the logger
@@ -431,22 +432,37 @@ class O2Runner:
         # job success is specific to the job type
         raise NotImplementedError
 
+    def ensure_ssh_connection(self):
+        """
+        Ensures self.ssh is a *live* connection. Re-establishes if needed.
+        """
+        connected = False
+        if self.ssh is not None:
+            transport = self.ssh.get_transport()
+            if transport is not None and transport.is_active():
+                connected = True
+            else:
+                try:
+                    self.ssh.close()
+                except:
+                    pass
+                self.ssh = None
+        if not connected:
+            # Try to (re)establish connection here
+            self.establish_ssh_connection(n_attempts=10, attempt_delay=np.random.randint(60, 300))
+            # Optionally re-do landing hostname if still not live
+            if self.ssh is None or self.ssh.get_transport() is None or not self.ssh.get_transport().is_active():
+                self.find_ssh_landing_hostname()
+                self.establish_ssh_connection(n_attempts=10, attempt_delay=np.random.randint(60, 300))
+        if self.ssh is None or self.ssh.get_transport() is None or not self.ssh.get_transport().is_active():
+            raise ConnectionError("Could not establish SSH connection to O2")
+
     def check_job_status(self):
 
-        if self.ssh is None:
-            self.establish_ssh_connection(n_attempts=10, attempt_delay=np.random.randint(60, 300))
-        
-        # If still couldn't connect, try looking for a new landing hostname.
-        if self.ssh is None:
-            self.find_ssh_landing_hostname()
-            self.establish_ssh_connection(n_attempts=10, attempt_delay=np.random.randint(60, 300))
-
-        # If still couldn't connect, raise an error. It's annoying to fail this way b/c it leaves a job orphaned on O2.
-        # But the alternative is just futily checking job status forever, which would be annoying.
-        if self.ssh is None:
-            raise ConnectionError("Could not establish SSH connection to O2")
+        # Ensure ssh connection is alive
+        self.ensure_ssh_connection()
             
-
+        # Ensure we have a job id to check
         if not self.slurm_job_id:
             raise ValueError("slurm_job_id is not set")
 
