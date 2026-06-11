@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import traceback
 
 import cv2
 import h5py
@@ -237,21 +238,29 @@ class Inferencer2D:
 
                     # Check the exit code and handle errors
                     if process.returncode != 0:
+                        logger.error(f"Video processing failed for {video_path}: {stderr}")
                         error_log_file = (
                             self.output_directory_predictions / f"{video_path.stem}.error.log"
                         )
                         logger.info(
                             f"Video failed {video_path}, writing to log file {error_log_file}"
                         )
-                        with open(error_log_file, "w") as f:
-                            # Write both stdout and stderr to the file
-                            f.write("Standard Output:\n")
-                            f.write(stdout)
-                            f.write("\n\nStandard Error:\n")
-                            f.write(stderr)
+                        try:
+                            with open(error_log_file, "w") as f:
+                                # Write both stdout and stderr to the file
+                                f.write("Standard Output:\n")
+                                f.write(stdout)
+                                f.write("\n\nStandard Error:\n")
+                                f.write(stderr)
+                        except Exception as e:
+                            logger.error(f"Failed to write error log file: {e}")
+                            logger.error(traceback.format_exc())
+
+                        logger.info(f"Does error log exist right after writing? {os.path.exists(error_log_file)}")
                     else:
                         # when completed, move to output file
                         shutil.copy(temp_h5_path, output_h5_file)
+
                     if os.path.exists(temp_h5_path):
                         os.remove(temp_h5_path)
                     # remove the log file
