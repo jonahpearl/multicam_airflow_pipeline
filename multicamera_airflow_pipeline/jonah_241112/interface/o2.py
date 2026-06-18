@@ -40,6 +40,7 @@ class O2Runner:
     def __init__(
         self,
         job_name_prefix,
+        remote_results_directory,
         remote_job_directory,
         conda_env,
         job_params={},
@@ -56,6 +57,7 @@ class O2Runner:
         do_not_submit=False,
     ):
         self.job_name_prefix = job_name_prefix
+        self.remote_results_directory = remote_results_directory  # might be a list
         self.remote_job_directory = Path(remote_job_directory)
         self.o2_n_cpus = o2_n_cpus
         self.o2_memory = o2_memory
@@ -85,6 +87,9 @@ class O2Runner:
         self.params_loc = self.remote_job_directory / f"{self.job_name}.params.yaml"
         self.output_log = self.remote_job_directory / f"{self.job_name}_jobid_%j.log"
         self.ssh = None
+
+        # Report current username
+        logging.info(f"O2Runner initialized with username: {self.o2_username}")
 
         # self.establish_ssh_connection()
         self.ensure_ssh_connection()
@@ -120,14 +125,21 @@ class O2Runner:
         for jobid, job_dict in running_jobs_info.items():
             logger.info(f"Existing job id {jobid}, name {job_dict['NAME']}")
             if self.job_name_prefix in job_dict["NAME"]:
-                logger.info(f"Found running job with prefix {self.job_name_prefix}, id {jobid}, fullname {job_dict["NAME"]}, not submitting another.")
+                logger.info(f"Found running job with prefix {self.job_name_prefix}, id {jobid}, fullname {job_dict['NAME']}, not submitting another.")
                 self.slurm_job_id = jobid
                 return
-
 
         # create the remote job directory
         logger.info(f"Creating remote job directory: {self.remote_job_directory}")
         self.create_folder_on_remote(self.remote_job_directory)
+
+        # create the remote results directory
+        logger.info(f"Creating remote results directory: {self.remote_results_directory}")
+        if isinstance(self.remote_results_directory, list):
+            for d in self.remote_results_directory:
+                self.create_folder_on_remote(d)
+        else:
+            self.create_folder_on_remote(self.remote_results_directory)
 
         logger.info(f"Writing job files to remote directory: {self.remote_job_directory}")
         # write the python script

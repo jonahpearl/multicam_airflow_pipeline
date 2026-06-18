@@ -46,7 +46,7 @@ def calibrate_cameras(
     output_directory_camera_calibration = (
         output_directory / "camera_calibration" / recording_row.calibration_id
     )
-    output_directory_camera_calibration.mkdir(parents=True, exist_ok=True)
+    # output_directory_camera_calibration.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "camera_calibration" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -70,6 +70,7 @@ def calibrate_cameras(
     # create the job runner
     runner = O2Runner(
         job_name_prefix=f"{recording_row.calibration_id}_calibration",
+        remote_results_directory=output_directory_camera_calibration,
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["camera_calibration"]["conda_env"],
         o2_username=recording_row.username,

@@ -51,7 +51,7 @@ def validation_videos(
         / "keypoint_validation_videos"
         / recording_row.video_recording_id
     )
-    output_directory_val_vids.mkdir(parents=True, exist_ok=True)
+    # output_directory_val_vids.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "keypoint_validation_videos" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -98,6 +98,7 @@ def validation_videos(
     # create the job runner
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_validation_videos",
+        remote_results_directory=output_directory_val_vids,
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["validation_videos"]["conda_env"],
         o2_username=recording_row.username,

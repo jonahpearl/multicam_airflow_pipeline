@@ -49,7 +49,7 @@ def arena_alignment(
     arena_alignment_output_directory = (
         output_directory / "arena_alignment" / recording_row.video_recording_id
     )
-    arena_alignment_output_directory.mkdir(parents=True, exist_ok=True)
+    # arena_alignment_output_directory.mkdir(parents=True, exist_ok=True)  # creating dir here results in permissions for whoever is sshfs'd on the local computer, but we want the permissions to reflect the username on O2, so only make this dir once we're remoted on.
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "arena_alignment" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -86,6 +86,7 @@ def arena_alignment(
     # create the job runner
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_arena_alignment",
+        remote_results_directory=arena_alignment_output_directory,
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["arena_alignment"]["conda_env"],
         o2_username=recording_row.username,

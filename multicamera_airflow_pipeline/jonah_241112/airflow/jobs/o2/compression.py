@@ -94,7 +94,7 @@ def compression(
     output_directory_log = (
         output_directory / "compression" / recording_row.video_recording_id
     )
-    output_directory_log.mkdir(parents=True, exist_ok=True)
+    # output_directory_log.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "compression" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -146,6 +146,7 @@ def compression(
         # Create the job runner
         runner = O2Runner(
             job_name_prefix=f"{recording_row.video_recording_id}_{cam}_compression",
+            remote_results_directory=output_directory_log,
             remote_job_directory=remote_job_directory,
             conda_env=config["o2"]["compression"]["conda_env"],
             o2_username=recording_row.username,

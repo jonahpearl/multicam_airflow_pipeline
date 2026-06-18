@@ -55,7 +55,7 @@ def spikesorting(
     spikesorting_output_directory = (
         output_directory / "spikesorting" / recording_row.video_recording_id
     )
-    spikesorting_output_directory.mkdir(parents=True, exist_ok=True)
+    # spikesorting_output_directory.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "spikesorting" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -87,6 +87,7 @@ def spikesorting(
     # create the job runner
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_spikesorting",
+        remote_results_directory=spikesorting_output_directory,
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["spikesorting"]["conda_env"],
         o2_username=recording_row.username,

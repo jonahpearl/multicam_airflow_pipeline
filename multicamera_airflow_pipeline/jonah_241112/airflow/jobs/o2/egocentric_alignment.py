@@ -53,8 +53,8 @@ def egocentric_alignment(
     egocentric_alignment_output_directory_nonrigid = (
         egocentric_alignment_output_directory / "nonrigid"
     )
-    egocentric_alignment_output_directory_rigid.mkdir(parents=True, exist_ok=True)
-    egocentric_alignment_output_directory_nonrigid.mkdir(parents=True, exist_ok=True)
+    # egocentric_alignment_output_directory_rigid.mkdir(parents=True, exist_ok=True)
+    # egocentric_alignment_output_directory_nonrigid.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "egocentric_alignment" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -93,6 +93,7 @@ def egocentric_alignment(
     # create the job runner
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_egocentric_alignment",
+        remote_results_directory=[egocentric_alignment_output_directory_rigid, egocentric_alignment_output_directory_nonrigid],
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["egocentric_alignment"]["conda_env"],
         o2_username=recording_row.username,

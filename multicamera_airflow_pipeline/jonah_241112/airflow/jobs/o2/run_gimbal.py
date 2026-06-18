@@ -48,7 +48,7 @@ def run_gimbal(
 
     # where to save output
     gimbal_output_directory = output_directory / "gimbal" / recording_row.video_recording_id
-    gimbal_output_directory.mkdir(parents=True, exist_ok=True)
+    # gimbal_output_directory.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "gimbal" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -97,6 +97,7 @@ def run_gimbal(
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_gimbal",
         remote_job_directory=remote_job_directory,
+        remote_results_directory=gimbal_output_directory,
         conda_env=config["o2"]["gimbal"]["conda_env"],
         o2_username=recording_row.username,
         o2_login_server="login.o2.rc.hms.harvard.edu",

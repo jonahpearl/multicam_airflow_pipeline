@@ -50,7 +50,7 @@ def triangulation(
     output_directory_triangulation = (
         output_directory / "triangulation" / recording_row.video_recording_id
     )
-    output_directory_triangulation.mkdir(parents=True, exist_ok=True)
+    # output_directory_triangulation.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "triangulation" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -104,6 +104,7 @@ def triangulation(
     # create the job runner
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_triangulation",
+        remote_results_directory=output_directory_triangulation,
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["triangulation"]["conda_env"],
         o2_username=recording_row.username,

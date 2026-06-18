@@ -53,7 +53,7 @@ def predict_2d(
     output_directory_predictions = (
         output_directory / "2D_predictions" / recording_row.video_recording_id
     )
-    output_directory_predictions.mkdir(parents=True, exist_ok=True)
+    # output_directory_predictions.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "2D_predictions" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -97,6 +97,7 @@ def predict_2d(
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_2d_predictions",
         remote_job_directory=remote_job_directory,
+        remote_results_directory=output_directory_predictions,
         conda_env=config["o2"]["prediction_2d"]["conda_env"],
         o2_username=recording_row.username,
         o2_login_server="login.o2.rc.hms.harvard.edu",

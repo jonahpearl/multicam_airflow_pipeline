@@ -50,7 +50,7 @@ def compute_continuous_features(
     continuous_features_output_directory = (
         output_directory / "continuous_features" / recording_row.video_recording_id
     )
-    continuous_features_output_directory.mkdir(parents=True, exist_ok=True)
+    # continuous_features_output_directory.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "continuous_features" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -98,6 +98,7 @@ def compute_continuous_features(
     # create the job runner
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_continuous_features",
+        remote_results_directory=continuous_features_output_directory,
         remote_job_directory=remote_job_directory,
         conda_env=config["o2"]["continuous_features"]["conda_env"],
         o2_username=recording_row.username,

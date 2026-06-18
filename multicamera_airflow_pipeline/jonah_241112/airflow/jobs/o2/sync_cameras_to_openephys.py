@@ -70,7 +70,7 @@ def sync_cameras_to_openephys(
     output_directory_ephys_sync = (
         output_directory / "openephys_sync" / recording_row.video_recording_id
     )
-    output_directory_ephys_sync.mkdir(parents=True, exist_ok=True)
+    # output_directory_ephys_sync.mkdir(parents=True, exist_ok=True)
     current_datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     remote_job_directory = job_directory / "openephys_sync" / f"{recording_row.video_recording_id}_{current_datetime_str}"
 
@@ -114,6 +114,7 @@ def sync_cameras_to_openephys(
     runner = O2Runner(
         job_name_prefix=f"{recording_row.video_recording_id}_ephys_sync",
         remote_job_directory=remote_job_directory,
+        remote_results_directory=output_directory_ephys_sync,
         conda_env=config["o2"]["sync_ephys"]["conda_env"],
         o2_username=recording_row.username,
         o2_login_server="login.o2.rc.hms.harvard.edu",
