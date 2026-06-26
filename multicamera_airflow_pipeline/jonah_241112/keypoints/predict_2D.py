@@ -512,7 +512,7 @@ def predict_video(
         h5f["keypoint_coords"] = keypoint_coords[:n_frames]
         h5f["keypoint_conf"] = keypoint_conf[:n_frames]
         if use_motpy:
-            h5f["detection_changes"] = detection_changes[: (frame_id + 1)]
+            h5f["detection_changes"] = detection_changes[: (frame_id + 1)]  # these are seemingly never used, but keypoint conf should be 0 for missed frames, so will be safely ignored by triangulation.
             h5f["missing_detections"] = missing_detections[: (frame_id + 1)]
 
 
