@@ -44,6 +44,7 @@ class Inferencer2D:
         recompute_completed=False,
         tensorrt_dir="/n/groups/datta/Jonah/Local_code_groups/tensorrt_install/TensorRT-8.6.1.6",
         patterns_to_exclude_from_vids=["azure", "TRIM"],
+        logging_level=logging.INFO,
     ):
 
         self.n_keypoints = n_keypoints
@@ -67,6 +68,9 @@ class Inferencer2D:
         self.ignore_log_files = ignore_log_files
         self.tensorrt_dir = tensorrt_dir
         self.patterns_to_exclude_from_vids = patterns_to_exclude_from_vids
+        self.logging_level = logging_level
+        logger.setLevel(self.logging_level)
+
 
         # get the device
         cuda_available = torch.cuda.is_available()
@@ -169,6 +173,7 @@ class Inferencer2D:
                             n_motpy_tracks=self.n_motpy_tracks,
                             use_tensorrt=self.use_tensorrt,
                             total_frames=self.expected_video_length_frames,
+                            logging_level=self.logging_level
                         )
                         # when completed, move to output file
                         shutil.copy(temp_h5_path, output_h5_file)
@@ -303,11 +308,17 @@ def predict_video(
     n_motpy_tracks=3,
     use_tensorrt=False,
     copy_video_locally=False,
+    logging_level=logging.INFO
 ):
     from mmdet.apis import inference_detector
     from mmpose.apis import inference_topdown
     from motpy import Detection, MultiObjectTracker
     import torch
+
+    # set up logger in here
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging_level)
+    logger.debug("Logger initialized in predict_video")
 
     video_path = Path(video_path)
     if not video_path.exists():
@@ -351,6 +362,12 @@ def predict_video(
             video.release()
             video = cv2.VideoCapture(local_video_path)
 
+        # Print video information
+        fps = video.get(cv2.CAP_PROP_FPS)
+        width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        logger.info(f"Video info: {video_path}, FPS: {fps}, Width: {width}, Height: {height}, Total Frames: {total_frames}")
+
         total_frames = int(total_frames)
         n_animals = int(n_animals)
         # allocate arrays
@@ -367,7 +384,7 @@ def predict_video(
             confs_motpy = np.zeros((n_animals, 1))
             detection_changes = np.zeros((total_frames, n_animals, 1))
             missing_detections = np.zeros((total_frames, n_animals, 1))
-
+            reset_tracker = False  # NEW: flag to reset tracker on next frame
             assert n_motpy_tracks >= n_animals
 
         n_frames = 0
@@ -375,6 +392,16 @@ def predict_video(
             success, frame = video.read()
             if not success:
                 break
+
+            # NEW: if previous frame requested a reset, do it now
+            if use_motpy and reset_tracker:
+                logger.warning(f"Resetting motpy tracker at frame {frame_id}")
+                tracker = MultiObjectTracker(dt=0.1)
+                animal_ids = {str(i): i for i in range(n_animals)}
+                bboxes_motpy[:] = 0
+                confs_motpy[:] = 0
+                reset_tracker = False
+
             if frame_id % detection_interval == 0:
                 if use_tensorrt:
                     bboxes, _, _ = detector(frame)
@@ -402,6 +429,7 @@ def predict_video(
                     # if the id is still being tracked, keep it
                     if animal_id in track_ids:
                         track = tracks[track_ids[animal_id]]
+                        tracking_missed = False  # NEW: ensure defined
                     else:
                         tracking_missed = True
                         for rank in track_score_rank:
@@ -425,8 +453,31 @@ def predict_video(
 
                 detection_coords[frame_id] = bboxes_motpy
                 detection_conf[frame_id] = confs_motpy
+
+                 # NEW: validate motpy bboxes; if any invalid, skip this frame and reset next
+                h, w = frame.shape[:2]
+                boxes = bboxes_motpy.copy()
+                invalid = (boxes[:, 2] <= boxes[:, 0]) | (boxes[:, 3] <= boxes[:, 1]) \
+                    | (boxes[:, 0] >= w) | (boxes[:, 1] >= h)  \
+                    | (boxes[:, 2] <= 0) | (boxes[:, 3] <= 0)
+                if invalid.any():
+                    bad_idx = np.where(invalid)[0]
+                    logger.warning(
+                        f"Invalid motpy bboxes at frame {frame_id}; "
+                        f"indices={bad_idx}, boxes={boxes[bad_idx]}"
+                    )
+                    for idx in bad_idx:
+                        missing_detections[frame_id, idx, 0] = 1
+                        detection_conf[frame_id, idx, 0] = 0.0
+                    reset_tracker = True
+                    n_frames += 1
+                    continue  # skip pose_estimator to avoid CUDA assert
+
+
                 if use_tensorrt:
                     try:
+                        logger.debug(f"Predicting keypoints for frame {frame_id}, shape {frame.shape}")
+                        logger.debug(f"Bboxes: {bboxes_motpy.astype(int)}")
                         poses = pose_estimator(frame, bboxes_motpy.astype(int))
                     except Exception as e:
                         logger.error(f"Failed at frame {frame_id}, shape {frame.shape}: {e}")
