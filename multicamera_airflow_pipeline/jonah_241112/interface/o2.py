@@ -55,6 +55,7 @@ class O2Runner:
         o2_qos=None,  # "gpuquad_qos"
         o2_gres=None,  # "gpu:1"
         do_not_submit=False,
+        start_delay=None,
     ):
         self.job_name_prefix = job_name_prefix
         self.remote_results_directory = remote_results_directory  # might be a list
@@ -90,6 +91,14 @@ class O2Runner:
 
         # Report current username
         logging.info(f"O2Runner initialized with username: {self.o2_username}")
+
+        # Add random delay to avoid overloading the server with simultaneous SSH connections, when starting many DAGs at once.
+        if start_delay is None:
+            start_delay = np.random.randint(30, 300)
+        else:
+            start_delay = int(start_delay)
+        logging.info(f"Waiting for {start_delay} seconds before establishing SSH connection to avoid overloading the server...")
+        time.sleep(start_delay)
 
         # self.establish_ssh_connection()
         self.ensure_ssh_connection()
